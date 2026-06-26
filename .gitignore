@@ -44,9 +44,7 @@ next-env.d.ts
 /.claude/
 /.nvmrc
 
-# Konzept-/Kontext-Docs: lokal halten, nicht ins Repo (Frank committed selbst)
-/00_README.md
-/01_Wissenssammlung_Komplexe_Systeme.md
-/02_Konzeptideen.md
-/03_Technik_Setup_und_Anforderungen.md
-/CLAUDE.md
+# alle Markdown-Docs lokal halten, nicht ins Repo (Frank committed selbst)
+# Ausnahme: die standard README.md des Projekts
+*.md
+!/README.md
