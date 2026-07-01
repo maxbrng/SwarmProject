@@ -39,6 +39,19 @@ export async function createBoidsEngine(
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error("Kein WebGPU-Adapter gefunden.");
   const device = await adapter.requestDevice();
+  // GPU-Verlust (z.B. nach GPU-Prozess-Absturz) sichtbar machen statt still einzufrieren.
+  device.lost.then((info) => {
+    // eslint-disable-next-line no-console
+    console.error("WebGPU-Device verloren:", info.reason, info.message);
+  });
+  // WGSL-/Validierungsfehler einmalig im Klartext loggen (WGSL-Fehler werfen nicht synchron).
+  let loggedErr = false;
+  device.addEventListener("uncapturederror", (e) => {
+    if (loggedErr) return;
+    loggedErr = true;
+    // eslint-disable-next-line no-console
+    console.error("WebGPU-Fehler:", (e as GPUUncapturedErrorEvent).error.message);
+  });
 
   const context = canvas.getContext("webgpu");
   if (!context) throw new Error("WebGPU-Canvas-Kontext nicht verfügbar.");
@@ -237,6 +250,7 @@ export async function createBoidsEngine(
 
   // ── Frame-Loop ───────────────────────────────────────────────────────────────
   const bg = cfg.background;
+  const startTime = performance.now();
   let ping = 0;
   let last = performance.now();
   let raf = 0;
@@ -278,6 +292,7 @@ export async function createBoidsEngine(
     params[7] = cfg.separationWeight;
     params[8] = aspect;
     params[9] = count;
+    params[10] = (now - startTime) / 1000; // time (für Wander)
     device.queue.writeBuffer(paramsBuffer, 0, params);
 
     renderParams[0] = aspect;

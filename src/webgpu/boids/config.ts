@@ -35,15 +35,15 @@ export interface BoidsConfig {
 export const MAX_COUNT = 8000;
 
 export const DEFAULT_CONFIG: BoidsConfig = {
-  count: 4000,
-  perception: 0.2, // GRÖSSE der Schwärme (Referenz: 100px auf 1000px-Welt)
-  separationDist: 0.04, // kurze Distanz für Kollisionsvermeidung
-  maxSpeed: 0.6,
-  maxForce: 2, // begrenzt NUR cohesion/separation (sanft) — alignment ist davon unabhängig
-  alignWeight: 0.25, // DOMINANT: Stärke des Heading-Blends → gemeinsames Fließen/Wenden
-  cohesionWeight: 1,
-  separationWeight: 1.2,
+  count: 8000,
+  perception: 0.1, // GRÖSSE der Schwärme: hoch = wenige große, klein = mehr kleine
+  separationDist: 0.06, // weiter als früher → hält Schwärme aufgelockert, kein Kollaps zum Punkt
+  maxSpeed: 0.2,
+  maxForce: 2, // begrenzt cohesion/separation
+  alignWeight: 0.7, // moderat: lokale Schwärme, kein globales Zusammenfließen zu EINEM
+  cohesionWeight: 0.35, // niedrig: zieht locker zusammen, ohne zum Punkt zu kollabieren
+  separationWeight: 1.7, // hoch: hält Boids auf Abstand → Schwärme bleiben aufgelockert
   boidScale: 0.007,
-  trailFade: 0.2,
+  trailFade: 0.17,
   background: [0.02, 0.025, 0.04],
 };

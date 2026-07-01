@@ -23,7 +23,7 @@ struct Params {
   separationW : f32,
   aspect      : f32,
   count       : f32,
-  _pad0       : f32,
+  time        : f32,
   _pad1       : f32,
 };
 
@@ -40,6 +40,15 @@ fn limit(v : vec2f, m : f32) -> vec2f {
 // Wie schnell sich ein Boid auf die mittlere Nachbar-Heading dreht (mit alignW skaliert).
 // Im Referenz-Repo ist alignment ungeclampt & dominant — hier als stabiler Blend nachgebaut.
 const ALIGN_RATE : f32 = 12.0;
+
+// Randvermeidung als sanfte Kraft (quadratischer Anstieg zur Wand). Generöser Margin,
+// kein hartes Klemmen → keine Rand-Linie, der Schwarm bankt davor ab.
+const EDGE_MARGIN : f32 = 0.25;
+const EDGE_PUSH   : f32 = 6.0;
+
+// Wander: lebendige, langsam variierende Eigenbewegung pro Boid → verhindert Kollaps & Stillstand.
+const WANDER_FREQ : f32 = 0.7;
+const WANDER_STR  : f32 = 1.1;
 
 @compute @workgroup_size(64)
 fn main(@builtin(global_invocation_id) gid : vec3u) {
@@ -99,6 +108,21 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     vel = mix(vel, alignVel, t);
   }
 
+  // Wander: pro Boid eine langsam rotierende Eigenbewegung → ständige Lebendigkeit,
+  // bricht Symmetrie auf, verhindert den globalen Kollaps zu einem Punkt.
+  let ph = f32(i) * 2.3999632; // goldener Winkel als Phase
+  let wdir = vec2f(cos(P.time * WANDER_FREQ + ph), sin(P.time * WANDER_FREQ * 1.27 + ph * 1.7));
+  vel += wdir * (WANDER_STR * P.maxSpeed) * P.dt;
+
+  // Randvermeidung als sanfte Kraft: quadratischer Anstieg zur Wand, kein Klemmen → keine Linie.
+  let m = EDGE_MARGIN;
+  var edgeAcc = vec2f(0.0);
+  if (pos.x >  P.aspect - m) { let dpt = (pos.x - (P.aspect - m)) / m; edgeAcc.x -= dpt * dpt; }
+  if (pos.x < -P.aspect + m) { let dpt = ((-P.aspect + m) - pos.x) / m; edgeAcc.x += dpt * dpt; }
+  if (pos.y >  1.0 - m)      { let dpt = (pos.y - (1.0 - m)) / m;       edgeAcc.y -= dpt * dpt; }
+  if (pos.y < -1.0 + m)      { let dpt = ((-1.0 + m) - pos.y) / m;      edgeAcc.y += dpt * dpt; }
+  vel += edgeAcc * (EDGE_PUSH * P.maxSpeed) * P.dt;
+
   vel = limit(vel, P.maxSpeed);
 
   // gleichmäßige Reisegeschwindigkeit (≥ 50 % maxSpeed) → ruhiges, gleitendes Bild
@@ -107,12 +131,6 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   if (sp < minSp && sp > 0.0) { vel = vel / sp * minSp; }
 
   pos += vel * P.dt;
-
-  // toroidaler Rand: x ∈ [-aspect, aspect], y ∈ [-1, 1]
-  if (pos.x >  P.aspect) { pos.x -= 2.0 * P.aspect; }
-  if (pos.x < -P.aspect) { pos.x += 2.0 * P.aspect; }
-  if (pos.y >  1.0)      { pos.y -= 2.0; }
-  if (pos.y < -1.0)      { pos.y += 2.0; }
 
   outB[i].pos = pos;
   outB[i].vel = vel;
