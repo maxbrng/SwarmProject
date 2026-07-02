@@ -123,7 +123,7 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   boidScale: 0.007,
   trailFade: 0.17,
   colorIntensity: 0.8,
-  background: [0.02, 0.025, 0.04],
+  background: [0, 0, 0],
 
   numSpecies: 3,
   chaseWeight: 1.2,

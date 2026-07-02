@@ -411,6 +411,22 @@ export async function createBoidsEngine(
   ro.observe(canvas);
   resize();
 
+  // Re-render at the correct resolution when the device pixel ratio changes — e.g. the window
+  // is dragged between a Retina laptop screen (dpr 2) and an external monitor (dpr 1). The
+  // ResizeObserver only fires on element-size changes, so without this the canvas keeps its old
+  // dpr after moving displays and looks blurry (rendered at the wrong resolution, then scaled).
+  let dprMedia: MediaQueryList | null = null;
+  function onDprChange() {
+    resize();
+    watchDpr(); // matchMedia is one-shot per dpr value → re-arm for the new ratio
+  }
+  function watchDpr() {
+    dprMedia?.removeEventListener("change", onDprChange);
+    dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    dprMedia.addEventListener("change", onDprChange);
+  }
+  watchDpr();
+
   // ── Frame loop ───────────────────────────────────────────────────────────────
   const bg = cfg.background;
   const startTime = performance.now();
@@ -508,7 +524,7 @@ export async function createBoidsEngine(
     const cpass = encoder.beginComputePass();
     cpass.setPipeline(computePipeline);
     cpass.setBindGroup(0, computeGroups[ping]);
-    cpass.dispatchWorkgroups(Math.ceil(count / 64));
+    cpass.dispatchWorkgroups(Math.ceil(count / 256)); // behavior compute uses workgroup_size(256)
     cpass.end();
 
     const latest = 1 - ping; // where the compute pass wrote to
@@ -611,6 +627,7 @@ export async function createBoidsEngine(
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      dprMedia?.removeEventListener("change", onDprChange);
       trailTexture?.destroy();
       boidBuffers.forEach((b) => b.destroy());
       paramsBuffer.destroy();

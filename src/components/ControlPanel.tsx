@@ -511,10 +511,6 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
                   </button>
                 ))}
               </div>
-
-              <button className="panel__reset" onClick={onReseed} style={{ marginTop: 8 }}>
-                ↻ Restart
-              </button>
             </>,
           )}
 
@@ -580,6 +576,9 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
               {saveLabel}
             </button>
           )}
+          <button className="panel__reset" onClick={onReseed}>
+            ↻ Restart
+          </button>
           <button className="panel__reset" onClick={reset}>
             Reset all values
           </button>

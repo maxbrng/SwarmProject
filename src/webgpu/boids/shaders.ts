@@ -116,26 +116,113 @@ const HOMING      : f32 = 0.5;    // homeland mode: pull force of boids toward t
 const CHAOS_RATE  : f32 = 6.0;    // chaos: encounter-decision windows per second
 const CHAOS_KILL  : f32 = 0.5;    // chaos: chance an in-range encounter results in a kill
 
-@compute @workgroup_size(64)
-fn main(@builtin(global_invocation_id) gid : vec3u) {
+const WG : u32 = 256u;
+var<workgroup> sPos : array<vec2f, 256>;
+var<workgroup> sVel : array<vec2f, 256>;
+var<workgroup> sSp  : array<f32, 256>;
+var<workgroup> sEn  : array<f32, 256>;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) gid : vec3u,
+        @builtin(local_invocation_index) lid : u32) {
   let n = u32(P.count);
   let i = gid.x;
-  if (i >= n) { return; }
-
+  let valid = i < n;
   let ns = i32(P.numSpecies);
-  var pos    = inB[i].pos;
-  var vel    = inB[i].vel;
-  var spMe   = i32(inB[i].species);
-  var energy = inB[i].energy;
-  var age    = inB[i].age + P.dt;
-  var flash  = inB[i].flash * exp(-8.0 * P.dt); // flash fades quickly
+
+  // Load self. Out-of-range threads get dummy state but still join the tiled
+  // barriers below (workgroupBarrier requires uniform control flow).
+  var pos = vec2f(0.0); var vel = vec2f(0.0);
+  var spMe = -1; var energy = 0.0; var age = 0.0; var flash = 0.0;
+  if (valid) {
+    pos = inB[i].pos; vel = inB[i].vel; spMe = i32(inB[i].species);
+    energy = inB[i].energy; age = inB[i].age + P.dt;
+    flash = inB[i].flash * exp(-8.0 * P.dt); // flash fades quickly
+  }
+
+  let bmode = i32(P.birthMode);
+  let isFree         = valid && spMe < 0;
+  let isDying        = valid && spMe >= 0 && energy <= 0.0;
+  let isLiving       = valid && spMe >= 0 && energy > 0.0;
+  let isFreeAdaptive = isFree && bmode == 2;
+  let interR = P.perception * 1.6; // predators/prey sense a bit farther
+  let wq = u32(max(floor(P.time * CHAOS_RATE), 0.0));
+
+  // flocking / predator-prey accumulators (living boids)
+  var alignSum = vec2f(0.0); var cohSum = vec2f(0.0); var sepSum = vec2f(0.0);
+  var nFlock = 0.0; var nSep = 0.0;
+  var chaseSum = vec2f(0.0); var chaseN = 0.0;
+  var fleeSum  = vec2f(0.0); var fleeN  = 0.0;
+  var gotEaten = false; var eaterSp = 0; var ate = false;
+  // nearest well-fed parent (free slot, adaptive reproduction)
+  var nd = 1e30; var nsp = -1; var npos = vec2f(0.0); var nvel = vec2f(0.0);
+
+  // ── Neighbor sweep, tiled through workgroup shared memory ────────────────────
+  // Still O(n²) work, but each boid is read from global memory ~once per workgroup
+  // (into shared) instead of once per thread → far less bandwidth → much faster at
+  // high counts. ALL invocations run every tile so the barriers stay uniform.
+  let numTiles = (n + WG - 1u) / WG;
+  for (var t = 0u; t < numTiles; t = t + 1u) {
+    let base = t * WG;
+    let li = base + lid;
+    if (li < n) {
+      sPos[lid] = inB[li].pos; sVel[lid] = inB[li].vel;
+      sSp[lid]  = inB[li].species; sEn[lid] = inB[li].energy;
+    } else {
+      sSp[lid] = -1.0;
+    }
+    workgroupBarrier();
+
+    for (var k = 0u; k < WG; k = k + 1u) {
+      let j = base + k;
+      if (j < n && j != i) {
+        let so = i32(sSp[k]);
+        if (so >= 0) {
+          let opos = sPos[k];
+          if (isLiving) {
+            let diff = pos - opos;
+            let d = length(diff);
+            if (so == spMe) {
+              if (d < P.perception) { alignSum += sVel[k]; cohSum += opos; nFlock += 1.0; }
+              if (d < P.sepDist && d > 0.0) { sepSum += normalize(diff) * (1.0 - d / P.sepDist); nSep += 1.0; }
+            } else if (d < interR && d > 0.0) {
+              if (P.domMode >= 0.5) {
+                // chaos: everyone drawn to every other species; contact → symmetric coin flip
+                chaseSum += -diff; chaseN += 1.0;
+                if (d < P.killRadius) {
+                  let lo = min(i, j); let hi = max(i, j);
+                  let hit = hash3(lo, hi, wq);
+                  if (hit < CHAOS_KILL) {
+                    let w = hash3(hi, lo, wq + 7u);
+                    let iWins = select(i == hi, i == lo, w < 0.5);
+                    if (iWins) { ate = true; } else { gotEaten = true; eaterSp = so; }
+                  }
+                }
+              } else if (eats(spMe, so)) {
+                chaseSum += -diff; chaseN += 1.0;           // prey → chase it
+                if (d < P.killRadius) { ate = true; }
+              } else if (eats(so, spMe)) {
+                fleeSum += diff; fleeN += 1.0;              // predator → flee
+                if (d < P.killRadius) { gotEaten = true; eaterSp = so; }
+              }
+            }
+          }
+          if (isFreeAdaptive && sEn[k] > REPRO_E) {
+            let dd = distance(pos, opos);
+            if (dd < P.perception && dd < nd) { nd = dd; nsp = so; npos = opos; nvel = sVel[k]; }
+          }
+        }
+      }
+    }
+    workgroupBarrier();
+  }
+
+  if (!valid) { return; }
 
   // ── Free slot (dead): respawn depending on birth mode ──────────────────────
-  if (spMe < 0) {
-    let bmode = i32(P.birthMode);
+  if (isFree) {
     let rGate = hash11(f32(i) * 0.017 + P.time * 7.13);
     var born = false;
-
     if (bmode == 1) {
       // constant: small random trickle, random species at a random spot
       if (hash11(f32(i) * 0.037 + P.time * 3.7 + 5.0) < IMMIGRATION) {
@@ -145,23 +232,12 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         born = true;
       }
     } else if (bmode == 2) {
-      // adaptive: a free slot is reborn from the NEAREST well-fed parent (energy > REPRO_E)
-      // → the child appears right next to a real boid, inside the swarm (never random, no
-      // fragmentation). The birth RATE adapts to swarm size: a species below its fair share
-      // (1/ns of all alive) breeds faster, controlled by adaptiveStrength (0 = uniform rate).
-      var total = 0.0;
-      for (var s = 0; s < ns; s = s + 1) { total += popCount(s); }
-      let targetFrac = 1.0 / f32(ns);
-
-      var nd = 1e30; var nsp = -1; var npos = vec2f(0.0); var nvel = vec2f(0.0);
-      for (var j = 0u; j < n; j = j + 1u) {
-        let o = inB[j];
-        let so = i32(o.species);
-        if (so < 0 || o.energy <= REPRO_E) { continue; } // only well-fed parents
-        let dd = distance(pos, o.pos);
-        if (dd < P.perception && dd < nd) { nd = dd; nsp = so; npos = o.pos; nvel = o.vel; }
-      }
+      // adaptive: reborn from the nearest well-fed parent found in the sweep (in-swarm).
+      // Rate adapts to swarm size (below fair share breeds faster), via adaptiveStrength.
       if (nsp >= 0) {
+        var total = 0.0;
+        for (var s = 0; s < ns; s = s + 1) { total += popCount(s); }
+        let targetFrac = 1.0 / f32(ns);
         let frac = popCount(nsp) / max(total, 1.0);
         let ratio = targetFrac / max(frac, 0.001);            // >1 if below fair share
         let factor = clamp(pow(ratio, P.adaptiveStrength), 0.0, 8.0); // strength 0 → 1 (uniform)
@@ -174,9 +250,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         }
       }
     } else if (bmode == 3) {
-      // homeland: born as the owner of the nearest home region, as a soft ball around
-      // the home center — but only while that species is below its fair share (so big
-      // territories stop growing; empty territories can be re-founded).
+      // homeland: nearest home region owner, below-share only (need-based).
       var hs = 0; var hd = 1e30;
       for (var s = 0; s < ns; s = s + 1) {
         let hdist = distance(pos, homeCenter(s, ns, P.aspect));
@@ -194,20 +268,15 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
       }
     }
     // bmode == 0 (off): nothing respawns.
-
-    if (born) {
-      energy = BIRTH_E; flash = 1.0; age = 0.0;
-    } else {
-      vel = vel * exp(-3.0 * P.dt); // coast, stay invisible
-      pos += vel * P.dt;
-    }
+    if (born) { energy = BIRTH_E; flash = 1.0; age = 0.0; }
+    else { vel = vel * exp(-3.0 * P.dt); pos += vel * P.dt; } // coast, stay invisible
     outB[i].pos = pos; outB[i].vel = vel;
     outB[i].species = f32(spMe); outB[i].energy = energy; outB[i].age = age; outB[i].flash = flash;
     return;
   }
 
   // ── Dying (energy ≤ 0): fade out in place, then free the slot ───────────────
-  if (energy <= 0.0) {
+  if (isDying) {
     energy = energy - P.dt / DYING_TIME; // runs from 0 → -1 over DYING_TIME
     vel = vel * exp(-4.0 * P.dt);
     pos = pos + vel * P.dt;
@@ -217,56 +286,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     return;
   }
 
-  // ── Living boid ─────────────────────────────────────────────────────────────
-  var alignSum = vec2f(0.0);
-  var cohSum   = vec2f(0.0);
-  var sepSum   = vec2f(0.0);
-  var nFlock   = 0.0;
-  var nSep     = 0.0;
-  var chaseSum = vec2f(0.0); var chaseN = 0.0;
-  var fleeSum  = vec2f(0.0); var fleeN  = 0.0;
-  var gotEaten = false; var eaterSp = 0;
-  var ate = false;
-
-  let interR = P.perception * 1.6; // predators/prey sense a bit farther
-
-  for (var j = 0u; j < n; j = j + 1u) {
-    if (j == i) { continue; }
-    let o = inB[j];
-    let so = i32(o.species);
-    if (so < 0) { continue; } // ignore the dead
-    let diff = pos - o.pos;
-    let d = length(diff);
-
-    if (so == spMe) {
-      if (d < P.perception) { alignSum += o.vel; cohSum += o.pos; nFlock += 1.0; }
-      if (d < P.sepDist && d > 0.0) { sepSum += normalize(diff) * (1.0 - d / P.sepDist); nSep += 1.0; }
-    } else if (d < interR && d > 0.0) {
-      if (P.domMode >= 0.5) {
-        // chaos: no fixed roles — everyone is drawn toward every other species (they pile into
-        // a dense brawl), and on contact a symmetric per-pair coin flip decides whether the
-        // attack lands and who wins → exactly one dies. No permanent predator or prey.
-        chaseSum += -diff; chaseN += 1.0;
-        if (d < P.killRadius) {
-          let lo = min(i, j); let hi = max(i, j);
-          let wq = u32(max(floor(P.time * CHAOS_RATE), 0.0));
-          let hit = hash3(lo, hi, wq);
-          if (hit < CHAOS_KILL) {
-            let w = hash3(hi, lo, wq + 7u);
-            let iWins = select(i == hi, i == lo, w < 0.5);
-            if (iWins) { ate = true; }
-            else { gotEaten = true; eaterSp = so; }
-          }
-        }
-      } else if (eats(spMe, so)) {
-        chaseSum += -diff; chaseN += 1.0;           // prey → chase it
-        if (d < P.killRadius) { ate = true; }
-      } else if (eats(so, spMe)) {
-        fleeSum += diff; fleeN += 1.0;              // predator → flee
-        if (d < P.killRadius) { gotEaten = true; eaterSp = so; }
-      }
-    }
-  }
+  // ── Living boid: apply the accumulated forces ───────────────────────────────
 
   var acc = vec2f(0.0);
 
@@ -495,6 +515,12 @@ fn vs(@builtin(vertex_index) vi : u32) -> VOut {
 
 @fragment
 fn fs(in : VOut) -> @location(0) vec4f {
-  return textureSample(tex, samp, in.uv);
+  var c = textureSample(tex, samp, in.uv).rgb;
+  // Floor the faintest residue to pure black. An 8-bit trail buffer that fades
+  // multiplicatively gets stuck around 1/255 (rounding never reaches 0), leaving a dim
+  // permanent smear. Subtract a tiny threshold and rescale so bright boids stay full.
+  let eps = 0.011;
+  c = max(c - vec3f(eps), vec3f(0.0)) / (1.0 - eps);
+  return vec4f(c, 1.0);
 }
 `;
