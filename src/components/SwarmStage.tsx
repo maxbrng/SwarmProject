@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 
-// Canvas client-only laden: WebGPU darf nie beim SSR/Modul-Import laufen.
+// Load the canvas client-only: WebGPU must never run during SSR/module import.
 const BoidsCanvas = dynamic(() => import("./BoidsCanvas"), { ssr: false });
 
 export default function SwarmStage() {

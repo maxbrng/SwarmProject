@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Schwarm",
-  description: "Autonomes Boids-Ökosystem (WebGPU)",
+  title: "Swarm",
+  description: "Autonomous boids ecosystem (WebGPU)",
 };
 
 export default function RootLayout({
@@ -23,8 +23,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="de" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body>{children}</body>
+    // suppressHydrationWarning: browser extensions (theme/color-scheme managers, e.g. ones
+    // that add data-theme / color-scheme / a "chakra-ui-*" class) mutate <html>/<body> before
+    // React hydrates. That's harmless but triggers a hydration mismatch warning — suppressing
+    // it on these two elements is the official Next.js fix. Only affects their own attributes.
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable}`}
+      suppressHydrationWarning
+    >
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }

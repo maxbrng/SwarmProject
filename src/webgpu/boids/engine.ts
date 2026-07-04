@@ -1,29 +1,84 @@
-// WebGPU-Boids-Engine.
-// init → läuft autonom in einer requestAnimationFrame-Schleife.
-// Compute-Shader (Ping-Pong) berechnet das Verhalten, gerendert wird in eine
-// Trail-Textur (Fade-Pass + additive Boids), die anschließend auf den Canvas geblittet wird.
+// WebGPU boids engine.
+// init → runs autonomously in a requestAnimationFrame loop.
+// A compute shader (ping-pong) computes the behavior; rendering goes into a
+// trail texture (fade pass + additive boids), which is then blitted onto the canvas.
 //
-// Buffer werden für MAX_COUNT Boids vorab allokiert und alle einmal befüllt;
-// cfg.count steuert nur, wie viele davon aktiv simuliert/gezeichnet werden →
-// die Anzahl ist live regelbar ohne Neu-Allokation.
+// Buffers are pre-allocated for MAX_COUNT boids and all filled once;
+// cfg.count only controls how many are actively simulated/drawn →
+// the count is adjustable live without re-allocation.
 
-import { BoidsConfig, DEFAULT_CONFIG, MAX_COUNT } from "./config";
-import { computeWGSL, boidsWGSL, fadeWGSL, blitWGSL } from "./shaders";
+import {
+  BoidsConfig,
+  DEFAULT_CONFIG,
+  MAX_COUNT,
+  MAX_SPECIES,
+  SPECIES_PALETTE,
+  SeedMode,
+} from "./config";
+import {
+  computeWGSL,
+  boidsWGSL,
+  fadeWGSL,
+  blitWGSL,
+  countWGSL,
+  gridCountWGSL,
+  gridScanWGSL,
+  gridScatterWGSL,
+} from "./shaders";
 
 export interface BoidsHandle {
   dispose: () => void;
-  /** Parameter live ändern (auch count, bis MAX_COUNT). */
+  /** Change parameters live (including count, up to MAX_COUNT). */
   update: (partial: Partial<BoidsConfig>) => void;
+  /** Restart the ecosystem (with the current seedMode/numSpecies). */
+  reseed: () => void;
 }
 
 export interface EngineOptions {
   config?: Partial<BoidsConfig>;
   onFps?: (fps: number) => void;
+  /** Alive boids per species (length MAX_SPECIES), several times per second. */
+  onCounts?: (counts: number[]) => void;
 }
 
 const TRAIL_FORMAT: GPUTextureFormat = "rgba8unorm";
-const PARAMS_FLOATS = 12; // Compute-Uniform (48 Byte)
+const PARAMS_FLOATS = 28; // compute uniform (112 bytes; 28 floats incl. padding)
+const FLOATS_PER_BOID = 8; // pos.xy, vel.xy, species, energy, age, flash
 const MAX_DPR = 2;
+// Spatial grid: max resolution the neighbour-search grid can have. Buffers are sized for this;
+// the actual grid dims each frame are ≤ these (cell size grows with the perception radius).
+const MAX_GRID_X = 128;
+const MAX_GRID_Y = 80;
+const MAX_CELLS = MAX_GRID_X * MAX_GRID_Y; // 10240
+
+function deathModeNum(m: BoidsConfig["deathMode"]): number {
+  return m === "energy" ? 1 : 0;
+}
+
+function birthModeNum(m: BoidsConfig["birthMode"]): number {
+  return { off: 0, constant: 1, adaptive: 2, homeland: 3 }[m];
+}
+
+// Who-eats-whom matrix as a per-predator bitmask (row s: bit b set ⇒ s eats b).
+// 8 floats = 2×vec4; only the first `numSpecies` rows are used.
+function computeDominance(mode: BoidsConfig["dominanceMode"], numSpecies: number) {
+  const rows = new Array(6).fill(0);
+  // No fixed matrix for a lone species, or in chaos mode (decided per encounter in the shader).
+  if (numSpecies < 2 || mode === "chaos") return new Float32Array(8);
+  if (mode === "cyclic") {
+    for (let a = 0; a < numSpecies; a++) rows[a] |= 1 << ((a + 1) % numSpecies);
+  } else {
+    // random tournament: each pair's winner decided by a coin flip
+    for (let a = 0; a < numSpecies; a++)
+      for (let b = a + 1; b < numSpecies; b++) {
+        if (Math.random() < 0.5) rows[a] |= 1 << b;
+        else rows[b] |= 1 << a;
+      }
+  }
+  const arr = new Float32Array(8);
+  for (let s = 0; s < 6; s++) arr[s] = rows[s];
+  return arr;
+}
 
 export async function createBoidsEngine(
   canvas: HTMLCanvasElement,
@@ -33,42 +88,72 @@ export async function createBoidsEngine(
   cfg.count = Math.min(cfg.count, MAX_COUNT);
 
   if (typeof navigator === "undefined" || !navigator.gpu) {
-    throw new Error("WebGPU wird von diesem Browser nicht unterstützt (Chrome aktuell halten).");
+    throw new Error("WebGPU is not supported by this browser (keep Chrome up to date).");
   }
 
   const adapter = await navigator.gpu.requestAdapter();
-  if (!adapter) throw new Error("Kein WebGPU-Adapter gefunden.");
+  if (!adapter) throw new Error("No WebGPU adapter found.");
   const device = await adapter.requestDevice();
-  // GPU-Verlust (z.B. nach GPU-Prozess-Absturz) sichtbar machen statt still einzufrieren.
+  // Surface GPU loss (e.g. after a GPU-process crash) instead of silently freezing.
   device.lost.then((info) => {
     // eslint-disable-next-line no-console
-    console.error("WebGPU-Device verloren:", info.reason, info.message);
+    console.error("WebGPU device lost:", info.reason, info.message);
   });
-  // WGSL-/Validierungsfehler einmalig im Klartext loggen (WGSL-Fehler werfen nicht synchron).
+  // Log the first WGSL/validation error in clear text (WGSL errors don't throw synchronously).
   let loggedErr = false;
   device.addEventListener("uncapturederror", (e) => {
     if (loggedErr) return;
     loggedErr = true;
     // eslint-disable-next-line no-console
-    console.error("WebGPU-Fehler:", (e as GPUUncapturedErrorEvent).error.message);
+    console.error("WebGPU error:", (e as GPUUncapturedErrorEvent).error.message);
   });
 
   const context = canvas.getContext("webgpu");
-  if (!context) throw new Error("WebGPU-Canvas-Kontext nicht verfügbar.");
+  if (!context) throw new Error("WebGPU canvas context not available.");
   const canvasFormat = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format: canvasFormat, alphaMode: "opaque" });
 
-  // ── Buffer (für MAX_COUNT vorab) ─────────────────────────────────────────────
-  // Boid = 4 floats (pos.xy, vel.xy) → 16 Byte
-  const boidData = new Float32Array(MAX_COUNT * 4);
-  for (let i = 0; i < MAX_COUNT; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const s = cfg.maxSpeed * (0.6 + Math.random() * 0.4);
-    boidData[i * 4 + 0] = Math.random() * 2 - 1; // x ∈ [-1,1] (Subset des Sim-Raums)
-    boidData[i * 4 + 1] = Math.random() * 2 - 1; // y ∈ [-1,1]
-    boidData[i * 4 + 2] = Math.cos(a) * s;
-    boidData[i * 4 + 3] = Math.sin(a) * s;
+  // ── Buffers (pre-allocated for MAX_COUNT) ────────────────────────────────────
+  // Boid = 8 floats (pos.xy, vel.xy, species, energy, age, flash) → 32 bytes
+  const boidData = new Float32Array(MAX_COUNT * FLOATS_PER_BOID);
+  function seedBoids(numSpecies: number, seedMode: SeedMode) {
+    // aspect for the distribution (canvas is mounted, clientWidth available)
+    const asp = Math.max(1, (canvas.clientWidth || 1) / (canvas.clientHeight || 1));
+    // species centers evenly on a circle → maximally far apart (corners/edges)
+    const centers: [number, number][] = [];
+    for (let s = 0; s < numSpecies; s++) {
+      const th = (2 * Math.PI * (s + 0.25)) / numSpecies;
+      centers.push([Math.cos(th) * asp * 0.78, Math.sin(th) * 0.78]);
+    }
+    const clusterR = 0.3;
+    for (let i = 0; i < MAX_COUNT; i++) {
+      const sp = i % numSpecies;
+      const o = i * FLOATS_PER_BOID;
+      let x: number;
+      let y: number;
+      if (seedMode === "clustered") {
+        const c = centers[sp];
+        const rr = Math.sqrt(Math.random()) * clusterR; // evenly filled disc
+        const ra = Math.random() * Math.PI * 2;
+        x = Math.max(-asp * 0.98, Math.min(asp * 0.98, c[0] + Math.cos(ra) * rr));
+        y = Math.max(-0.98, Math.min(0.98, c[1] + Math.sin(ra) * rr));
+      } else {
+        x = Math.random() * 2 - 1;
+        y = Math.random() * 2 - 1;
+      }
+      const a = Math.random() * Math.PI * 2;
+      const s = cfg.maxSpeed * (0.6 + Math.random() * 0.4);
+      boidData[o + 0] = x;
+      boidData[o + 1] = y;
+      boidData[o + 2] = Math.cos(a) * s;
+      boidData[o + 3] = Math.sin(a) * s;
+      boidData[o + 4] = sp; // species (evenly distributed)
+      boidData[o + 5] = 0.6 + Math.random() * 0.3; // energy
+      boidData[o + 6] = Math.random() * 5; // age
+      boidData[o + 7] = 0; // flash
+    }
   }
+  seedBoids(cfg.numSpecies, cfg.seedMode);
 
   const boidBuffers: GPUBuffer[] = [0, 1].map(() =>
     device.createBuffer({
@@ -78,12 +163,94 @@ export async function createBoidsEngine(
   );
   device.queue.writeBuffer(boidBuffers[0], 0, boidData);
 
+  // color/size palette per species (rgb + size factor), uploaded once
+  const paletteBuffer = device.createBuffer({
+    size: MAX_SPECIES * 4 * 4, // 6 × vec4
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  const paletteData = new Float32Array(MAX_SPECIES * 4);
+  // rgb comes from the (live-editable) speciesColors, the size factor stays from SPECIES_PALETTE.
+  function writePalette() {
+    for (let s = 0; s < MAX_SPECIES; s++) {
+      const col = cfg.speciesColors[s] ?? SPECIES_PALETTE[s] ?? [1, 1, 1];
+      const size = SPECIES_PALETTE[s]?.[3] ?? 1;
+      paletteData[s * 4 + 0] = col[0];
+      paletteData[s * 4 + 1] = col[1];
+      paletteData[s * 4 + 2] = col[2];
+      paletteData[s * 4 + 3] = size;
+    }
+    device.queue.writeBuffer(paletteBuffer, 0, paletteData);
+  }
+  writePalette();
+
+  // population counting: atomics buffer + staging buffer for async readback
+  const countsBuffer = device.createBuffer({
+    size: MAX_SPECIES * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+  });
+  const stagingBuffer = device.createBuffer({
+    size: MAX_SPECIES * 4,
+    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+  });
+  const countZeros = new Uint32Array(MAX_SPECIES);
+
+  // population sizes fed back into the sim (for adaptive/homeland reproduction). 8 floats = 2×vec4.
+  const popBuffer = device.createBuffer({
+    size: 8 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  const popData = new Float32Array(8);
+
+  // Predator-prey (who-eats-whom) matrix, fed to the sim as a uniform.
+  const domBuffer = device.createBuffer({
+    size: 8 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  function writeDominance() {
+    device.queue.writeBuffer(domBuffer, 0, computeDominance(cfg.dominanceMode, cfg.numSpecies));
+  }
+  writeDominance();
+
+  // ── Spatial-grid buffers (counting sort of boids into cells each frame) ──────
+  const cellCountBuf = device.createBuffer({
+    size: MAX_CELLS * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, // COPY_DST → cleared to 0 each frame
+  });
+  const cellStartBuf = device.createBuffer({
+    size: (MAX_CELLS + 1) * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
+  const cellCursorBuf = device.createBuffer({
+    size: MAX_CELLS * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
+  const sortedBuf = device.createBuffer({
+    size: MAX_COUNT * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
+  const cellOfBuf = device.createBuffer({
+    size: MAX_COUNT * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
+  const cellZeros = new Uint32Array(MAX_CELLS); // to clear cellCount each frame
+
+  let ping = 0; // ping-pong index (also reset by reseedNow)
+
+  // rebuild the ecosystem (both ping-pong buffers, starting from buffer 0)
+  function reseedNow() {
+    seedBoids(cfg.numSpecies, cfg.seedMode);
+    device.queue.writeBuffer(boidBuffers[0], 0, boidData);
+    device.queue.writeBuffer(boidBuffers[1], 0, boidData);
+    writeDominance(); // reroll (random mode gets fresh matchups on every restart)
+    ping = 0;
+  }
+
   const paramsBuffer = device.createBuffer({
     size: PARAMS_FLOATS * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   const renderParamsBuffer = device.createBuffer({
-    size: 4 * 4,
+    size: 8 * 4, // RenderParams = 5 floats, padded to 2×vec4
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   const fadeBuffer = device.createBuffer({
@@ -91,7 +258,7 @@ export async function createBoidsEngine(
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
 
-  // Dreieck-Geometrie pro Boid (+y = vorne)
+  // triangle geometry per boid (+y = front)
   const triangle = new Float32Array([0.0, 1.0, -0.6, -0.8, 0.6, -0.8]);
   const triangleBuffer = device.createBuffer({
     size: triangle.byteLength,
@@ -99,18 +266,60 @@ export async function createBoidsEngine(
   });
   device.queue.writeBuffer(triangleBuffer, 0, triangle);
 
-  // ── Bind-Group-Layouts ───────────────────────────────────────────────────────
+  // ── Bind group layouts ───────────────────────────────────────────────────────
   const computeBGL = device.createBindGroupLayout({
     entries: [
       { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
       { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
       { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // cellStart
+      { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // sortedIdx
+    ],
+  });
+  // Grid build passes share this simple 4-slot layout shape (uniform + 3 storage).
+  const gridCountBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // inB
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellCount
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellOf
+    ],
+  });
+  const gridScanBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // cellCount
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellStart
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellCursor
+    ],
+  });
+  const gridScatterBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellCursor
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // sortedIdx
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // cellOf
     ],
   });
   const renderBGL = device.createBindGroupLayout({
     entries: [
       { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
-      { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+      // RenderParams is read in the fragment stage too (colorGain), so make it visible there.
+      {
+        binding: 1,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+        buffer: { type: "uniform" },
+      },
+      { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+    ],
+  });
+  const countBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
     ],
   });
   const fadeBGL = device.createBindGroupLayout({
@@ -127,6 +336,24 @@ export async function createBoidsEngine(
   const computePipeline = device.createComputePipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [computeBGL] }),
     compute: { module: device.createShaderModule({ code: computeWGSL }), entryPoint: "main" },
+  });
+
+  const countPipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [countBGL] }),
+    compute: { module: device.createShaderModule({ code: countWGSL }), entryPoint: "main" },
+  });
+
+  const gridCountPipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [gridCountBGL] }),
+    compute: { module: device.createShaderModule({ code: gridCountWGSL }), entryPoint: "main" },
+  });
+  const gridScanPipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [gridScanBGL] }),
+    compute: { module: device.createShaderModule({ code: gridScanWGSL }), entryPoint: "main" },
+  });
+  const gridScatterPipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [gridScatterBGL] }),
+    compute: { module: device.createShaderModule({ code: gridScatterWGSL }), entryPoint: "main" },
   });
 
   const boidsModule = device.createShaderModule({ code: boidsWGSL });
@@ -183,7 +410,7 @@ export async function createBoidsEngine(
     primitive: { topology: "triangle-list" },
   });
 
-  // ── Bind-Groups ──────────────────────────────────────────────────────────────
+  // ── Bind groups ──────────────────────────────────────────────────────────────
   const computeGroups = [0, 1].map((k) =>
     device.createBindGroup({
       layout: computeBGL,
@@ -191,15 +418,60 @@ export async function createBoidsEngine(
         { binding: 0, resource: { buffer: paramsBuffer } },
         { binding: 1, resource: { buffer: boidBuffers[k] } },
         { binding: 2, resource: { buffer: boidBuffers[1 - k] } },
+        { binding: 3, resource: { buffer: popBuffer } },
+        { binding: 4, resource: { buffer: domBuffer } },
+        { binding: 5, resource: { buffer: cellStartBuf } },
+        { binding: 6, resource: { buffer: sortedBuf } },
       ],
     }),
   );
+  // grid build bind groups (count reads the current inB → one per ping)
+  const gridCountGroups = [0, 1].map((k) =>
+    device.createBindGroup({
+      layout: gridCountBGL,
+      entries: [
+        { binding: 0, resource: { buffer: paramsBuffer } },
+        { binding: 1, resource: { buffer: boidBuffers[k] } },
+        { binding: 2, resource: { buffer: cellCountBuf } },
+        { binding: 3, resource: { buffer: cellOfBuf } },
+      ],
+    }),
+  );
+  const gridScanGroup = device.createBindGroup({
+    layout: gridScanBGL,
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuffer } },
+      { binding: 1, resource: { buffer: cellCountBuf } },
+      { binding: 2, resource: { buffer: cellStartBuf } },
+      { binding: 3, resource: { buffer: cellCursorBuf } },
+    ],
+  });
+  const gridScatterGroup = device.createBindGroup({
+    layout: gridScatterBGL,
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuffer } },
+      { binding: 1, resource: { buffer: cellCursorBuf } },
+      { binding: 2, resource: { buffer: sortedBuf } },
+      { binding: 3, resource: { buffer: cellOfBuf } },
+    ],
+  });
   const renderGroups = [0, 1].map((k) =>
     device.createBindGroup({
       layout: renderBGL,
       entries: [
         { binding: 0, resource: { buffer: boidBuffers[k] } },
         { binding: 1, resource: { buffer: renderParamsBuffer } },
+        { binding: 2, resource: { buffer: paletteBuffer } },
+      ],
+    }),
+  );
+  const countGroups = [0, 1].map((k) =>
+    device.createBindGroup({
+      layout: countBGL,
+      entries: [
+        { binding: 0, resource: { buffer: paramsBuffer } },
+        { binding: 1, resource: { buffer: boidBuffers[k] } },
+        { binding: 2, resource: { buffer: countsBuffer } },
       ],
     }),
   );
@@ -210,7 +482,7 @@ export async function createBoidsEngine(
 
   const sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
 
-  // ── Trail-Textur (größenabhängig) ────────────────────────────────────────────
+  // ── Trail texture (size-dependent) ───────────────────────────────────────────
   let trailTexture: GPUTexture | null = null;
   let trailView: GPUTextureView | null = null;
   let blitGroup: GPUBindGroup | null = null;
@@ -248,28 +520,50 @@ export async function createBoidsEngine(
   ro.observe(canvas);
   resize();
 
-  // ── Frame-Loop ───────────────────────────────────────────────────────────────
+  // Re-render at the correct resolution when the device pixel ratio changes — e.g. the window
+  // is dragged between a Retina laptop screen (dpr 2) and an external monitor (dpr 1). The
+  // ResizeObserver only fires on element-size changes, so without this the canvas keeps its old
+  // dpr after moving displays and looks blurry (rendered at the wrong resolution, then scaled).
+  let dprMedia: MediaQueryList | null = null;
+  function onDprChange() {
+    resize();
+    watchDpr(); // matchMedia is one-shot per dpr value → re-arm for the new ratio
+  }
+  function watchDpr() {
+    dprMedia?.removeEventListener("change", onDprChange);
+    dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    dprMedia.addEventListener("change", onDprChange);
+  }
+  watchDpr();
+
+  // ── Frame loop ───────────────────────────────────────────────────────────────
   const bg = cfg.background;
   const startTime = performance.now();
-  let ping = 0;
   let last = performance.now();
   let raf = 0;
   let disposed = false;
 
   const params = new Float32Array(PARAMS_FLOATS);
-  const renderParams = new Float32Array(4);
+  const renderParams = new Float32Array(8);
 
-  // FPS-Mittelung
+  // FPS averaging
   let fpsAccum = 0;
   let fpsFrames = 0;
+
+  // population readback (several times per second, not every frame).
+  // Gate on the staging buffer's own mapState instead of a boolean flag — a boolean
+  // could get stuck true (e.g. if a mapAsync resolved after dispose) and freeze counts.
+  const COUNT_EVERY = 8;
+  let frameNo = 0;
+  const speciesCounts: number[] = new Array(MAX_SPECIES).fill(0);
 
   function frame(now: number) {
     if (disposed) return;
     let dt = (now - last) / 1000;
     last = now;
-    if (dt > 0.05) dt = 0.05; // Sprünge (Tab-Wechsel) deckeln
+    if (dt > 0.05) dt = 0.05; // cap jumps (tab switch)
 
-    // FPS melden (~2×/Sekunde)
+    // report FPS (~2×/second)
     if (opts.onFps && dt > 0) {
       fpsAccum += dt;
       fpsFrames += 1;
@@ -292,12 +586,45 @@ export async function createBoidsEngine(
     params[7] = cfg.separationWeight;
     params[8] = aspect;
     params[9] = count;
-    params[10] = (now - startTime) / 1000; // time (für Wander)
+    params[10] = (now - startTime) / 1000; // time (for wander)
+    params[11] = cfg.numSpecies;
+    params[12] = cfg.chaseWeight;
+    params[13] = cfg.fleeWeight;
+    params[14] = cfg.killRadius;
+    params[15] = cfg.birthRate;
+    params[16] = deathModeNum(cfg.deathMode);
+    params[17] = birthModeNum(cfg.birthMode);
+    params[18] = cfg.starveRate;
+    params[19] = cfg.dominanceMode === "chaos" ? 1 : 0;
+    params[20] = cfg.adaptiveStrength;
+    // spatial grid: cell size ≥ the neighbour radius (interR = perception·1.6) so a 3×3 cell
+    // block covers all neighbours; grid dims capped at MAX_GRID_* (buffers are sized for that).
+    const interR = cfg.perception * 1.6;
+    const cellSize = Math.max(interR, (2 * aspect) / MAX_GRID_X, 2 / MAX_GRID_Y);
+    const gridX = Math.min(MAX_GRID_X, Math.max(1, Math.ceil((2 * aspect) / cellSize)));
+    const gridY = Math.min(MAX_GRID_Y, Math.max(1, Math.ceil(2 / cellSize)));
+    params[21] = cellSize;
+    params[22] = gridX;
+    params[23] = gridY;
+    params[24] = cfg.declump; // anti-crowd strength (0 = off)
     device.queue.writeBuffer(paramsBuffer, 0, params);
+    device.queue.writeBuffer(cellCountBuf, 0, cellZeros, 0, gridX * gridY); // clear per-cell counts
+
+    // feed population sizes into the sim, but glide toward the latest counts instead of
+    // snapping. The count readback lags a few frames (GPU backpressure); snapping made the
+    // adaptive "need" jump, which spawned births in sudden waves. A smooth glide → births
+    // trickle in gradually. ~0.5s time constant at 60 fps.
+    const popSmooth = Math.min(1, 3 * dt);
+    for (let s = 0; s < MAX_SPECIES; s++) {
+      popData[s] += ((speciesCounts[s] ?? 0) - popData[s]) * popSmooth;
+    }
+    device.queue.writeBuffer(popBuffer, 0, popData);
 
     renderParams[0] = aspect;
     renderParams[1] = cfg.boidScale;
     renderParams[2] = cfg.maxSpeed;
+    renderParams[3] = cfg.deathMode === "energy" ? 1 : 0; // brightness by energy
+    renderParams[4] = cfg.colorIntensity;
     device.queue.writeBuffer(renderParamsBuffer, 0, renderParams);
 
     device.queue.writeBuffer(
@@ -306,18 +633,44 @@ export async function createBoidsEngine(
       new Float32Array([bg[0], bg[1], bg[2], cfg.trailFade]),
     );
 
-    const encoder = device.createCommandEncoder();
+    frameNo++;
+    const doCount =
+      !!opts.onCounts && frameNo % COUNT_EVERY === 0 && stagingBuffer.mapState === "unmapped";
+    if (doCount) device.queue.writeBuffer(countsBuffer, 0, countZeros); // zero the counters
 
-    // 1) Verhalten berechnen
+    const encoder = device.createCommandEncoder();
+    const gridDispatch = Math.ceil(count / 64);
+
+    // 0) build the spatial grid in THREE separate passes — dispatches within one pass are not
+    //    ordered, but consecutive passes are (each sees the previous pass's storage writes).
+    const countPass0 = encoder.beginComputePass();
+    countPass0.setPipeline(gridCountPipeline);
+    countPass0.setBindGroup(0, gridCountGroups[ping]);
+    countPass0.dispatchWorkgroups(gridDispatch);
+    countPass0.end();
+
+    const scanPass0 = encoder.beginComputePass();
+    scanPass0.setPipeline(gridScanPipeline);
+    scanPass0.setBindGroup(0, gridScanGroup);
+    scanPass0.dispatchWorkgroups(1);
+    scanPass0.end();
+
+    const scatterPass0 = encoder.beginComputePass();
+    scatterPass0.setPipeline(gridScatterPipeline);
+    scatterPass0.setBindGroup(0, gridScatterGroup);
+    scatterPass0.dispatchWorkgroups(gridDispatch);
+    scatterPass0.end();
+
+    // 1) compute the behavior (reads inB[ping] + the grid, writes inB[1-ping])
     const cpass = encoder.beginComputePass();
     cpass.setPipeline(computePipeline);
     cpass.setBindGroup(0, computeGroups[ping]);
-    cpass.dispatchWorkgroups(Math.ceil(count / 64));
+    cpass.dispatchWorkgroups(gridDispatch); // behavior compute uses workgroup_size(64)
     cpass.end();
 
-    const latest = 1 - ping; // dorthin hat der Compute-Pass geschrieben
+    const latest = 1 - ping; // where the compute pass wrote to
 
-    // 2) In die Trail-Textur: Fade + Boids
+    // 2) into the trail texture: fade + boids
     const trailPass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -340,7 +693,7 @@ export async function createBoidsEngine(
     trailPass.end();
     needsClear = false;
 
-    // 3) Trail-Textur auf den Canvas
+    // 3) trail texture onto the canvas
     const canvasPass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -356,7 +709,32 @@ export async function createBoidsEngine(
     canvasPass.draw(3);
     canvasPass.end();
 
+    // 4) count populations (atomics) + copy into staging
+    if (doCount) {
+      const countPass = encoder.beginComputePass();
+      countPass.setPipeline(countPipeline);
+      countPass.setBindGroup(0, countGroups[latest]);
+      countPass.dispatchWorkgroups(Math.ceil(count / 64));
+      countPass.end();
+      encoder.copyBufferToBuffer(countsBuffer, 0, stagingBuffer, 0, MAX_SPECIES * 4);
+    }
+
     device.queue.submit([encoder.finish()]);
+
+    if (doCount) {
+      stagingBuffer
+        .mapAsync(GPUMapMode.READ)
+        .then(() => {
+          if (disposed) return;
+          const arr = Array.from(new Uint32Array(stagingBuffer.getMappedRange().slice(0)));
+          stagingBuffer.unmap();
+          for (let s = 0; s < MAX_SPECIES; s++) speciesCounts[s] = arr[s] ?? 0;
+          opts.onCounts?.(arr);
+        })
+        .catch(() => {
+          /* mapAsync can reject if the device was lost; the buffer stays unmapped → retried */
+        });
+    }
 
     ping = latest;
     raf = requestAnimationFrame(frame);
@@ -365,21 +743,48 @@ export async function createBoidsEngine(
 
   return {
     update(partial: Partial<BoidsConfig>) {
+      const prevSpecies = cfg.numSpecies;
+      const prevSeed = cfg.seedMode;
+      const prevDom = cfg.dominanceMode;
       Object.assign(cfg, partial);
+      if (partial.speciesColors) writePalette();
       if (partial.count !== undefined) {
         cfg.count = Math.max(1, Math.min(Math.round(partial.count), MAX_COUNT));
       }
+      if (partial.numSpecies !== undefined) {
+        cfg.numSpecies = Math.max(1, Math.min(Math.round(partial.numSpecies), MAX_SPECIES));
+      }
+      // Species count or start layout changed → rebuild the ecosystem (also rerolls dominance).
+      if (cfg.numSpecies !== prevSpecies || cfg.seedMode !== prevSeed) {
+        reseedNow();
+      } else if (cfg.dominanceMode !== prevDom) {
+        writeDominance();
+      }
+    },
+    reseed() {
+      reseedNow();
     },
     dispose() {
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      dprMedia?.removeEventListener("change", onDprChange);
       trailTexture?.destroy();
       boidBuffers.forEach((b) => b.destroy());
       paramsBuffer.destroy();
       renderParamsBuffer.destroy();
       fadeBuffer.destroy();
       triangleBuffer.destroy();
+      paletteBuffer.destroy();
+      countsBuffer.destroy();
+      stagingBuffer.destroy();
+      popBuffer.destroy();
+      domBuffer.destroy();
+      cellCountBuf.destroy();
+      cellStartBuf.destroy();
+      cellCursorBuf.destroy();
+      sortedBuf.destroy();
+      cellOfBuf.destroy();
       device.destroy();
     },
   };
