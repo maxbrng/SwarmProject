@@ -14,33 +14,33 @@ struct Boid {
 };
 `;
 
-// ── Compute: flocking behavior + predator-prey ───────────────────────────────
+// Shared Params uniform (28 floats / 112 bytes). Indices 21..23 carry the spatial-grid
+// parameters (cell size + grid dims), 24 is the anti-crowd strength. Written by the engine
+// each frame. 25..27 pad the struct to a multiple of 16 bytes (7×vec4).
+const PARAMS_WGSL = /* wgsl */ `
+struct Params {
+  dt : f32, perception : f32, sepDist : f32, maxSpeed : f32, maxForce : f32,
+  alignW : f32, cohesionW : f32, separationW : f32, aspect : f32, count : f32,
+  time : f32, numSpecies : f32, chaseW : f32, fleeW : f32, killRadius : f32,
+  birthRate : f32, deathMode : f32, birthMode : f32, starveRate : f32, domMode : f32,
+  adaptiveStrength : f32, cellSize : f32, gridX : f32, gridY : f32,
+  declump : f32, _pg0 : f32, _pg1 : f32, _pg2 : f32,
+};
+`;
+
+// Which grid cell a position falls into (clamped to the grid).
+const CELL_WGSL = /* wgsl */ `
+fn cellOfPos(pos : vec2f, aspect : f32, cellSize : f32, gx : i32, gy : i32) -> u32 {
+  let cx = clamp(i32(floor((pos.x + aspect) / cellSize)), 0, gx - 1);
+  let cy = clamp(i32(floor((pos.y + 1.0) / cellSize)), 0, gy - 1);
+  return u32(cy) * u32(gx) + u32(cx);
+}
+`;
+
+// ── Compute: flocking behavior + predator-prey (spatial-grid neighbour search) ─
 export const computeWGSL = /* wgsl */ `
 ${BOID_STRUCT}
-struct Params {
-  dt          : f32,
-  perception  : f32,
-  sepDist     : f32,
-  maxSpeed    : f32,
-  maxForce    : f32,
-  alignW      : f32,
-  cohesionW   : f32,
-  separationW : f32,
-  aspect      : f32,
-  count       : f32,
-  time        : f32,
-  numSpecies  : f32,
-  chaseW      : f32,
-  fleeW       : f32,
-  killRadius  : f32,
-  birthRate   : f32,
-  deathMode   : f32, // 0 = convert, 1 = energy
-  birthMode   : f32, // 0 off, 1 constant, 2 adaptive, 3 homeland
-  starveRate  : f32, // energy lost per second (starvation)
-  domMode     : f32, // 0 = matrix (cyclic/random), 1 = chaos (per-encounter random)
-  adaptiveStrength : f32, // adaptive reproduction: how strongly small swarms breed faster
-  _p3 : f32, _p4 : f32, _p5 : f32, // pad to 24 floats (96 bytes)
-};
+${PARAMS_WGSL}
 struct PopCounts { a : vec4f, b : vec4f }; // alive boids per species: a=0..3, b=4..5
 struct DomMatrix { a : vec4f, b : vec4f }; // per-predator bitmask of prey: a=rows 0..3, b=rows 4..5
 
@@ -49,6 +49,8 @@ struct DomMatrix { a : vec4f, b : vec4f }; // per-predator bitmask of prey: a=ro
 @group(0) @binding(2) var<storage, read_write>  outB : array<Boid>;
 @group(0) @binding(3) var<uniform> Pop : PopCounts;
 @group(0) @binding(4) var<uniform> Dom : DomMatrix;
+@group(0) @binding(5) var<storage, read> cellStart : array<u32>; // prefix sums (len numCells+1)
+@group(0) @binding(6) var<storage, read> sortedIdx : array<u32>; // boid indices sorted by cell
 
 fn popCount(s : i32) -> f32 {
   if (s == 0) { return Pop.a.x; } if (s == 1) { return Pop.a.y; }
@@ -115,113 +117,30 @@ const REPRO_RATE  : f32 = 0.08;   // adaptive: base per-frame reproduction chanc
 const HOMING      : f32 = 0.5;    // homeland mode: pull force of boids toward their home region
 const CHAOS_RATE  : f32 = 6.0;    // chaos: encounter-decision windows per second
 const CHAOS_KILL  : f32 = 0.5;    // chaos: chance an in-range encounter results in a kill
+// Crowd relief (declump): outward pressure per crowding neighbour, and how many neighbours it
+// saturates at. The usable range is small (slider goes 0..0.1) — above that it gets too strong.
+const DECLUMP_PER  : f32 = 0.25;  // pressure (×maxForce) contributed per neighbour in sepDist
+const DECLUMP_CAP  : f32 = 12.0;  // neighbour count at which the pressure stops growing
+const DECLUMP_BIRTH : f32 = 0.09; // extra newborn spawn radius per unit declump (stays in-swarm)
 
-const WG : u32 = 256u;
-var<workgroup> sPos : array<vec2f, 256>;
-var<workgroup> sVel : array<vec2f, 256>;
-var<workgroup> sSp  : array<f32, 256>;
-var<workgroup> sEn  : array<f32, 256>;
-
-@compute @workgroup_size(256)
-fn main(@builtin(global_invocation_id) gid : vec3u,
-        @builtin(local_invocation_index) lid : u32) {
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
   let n = u32(P.count);
   let i = gid.x;
-  let valid = i < n;
+  if (i >= n) { return; }
+
   let ns = i32(P.numSpecies);
+  var pos    = inB[i].pos;
+  var vel    = inB[i].vel;
+  var spMe   = i32(inB[i].species);
+  var energy = inB[i].energy;
+  var age    = inB[i].age + P.dt;
+  var flash  = inB[i].flash * exp(-8.0 * P.dt); // flash fades quickly
+  let bmode  = i32(P.birthMode);
+  let rGate  = hash11(f32(i) * 0.017 + P.time * 7.13);
 
-  // Load self. Out-of-range threads get dummy state but still join the tiled
-  // barriers below (workgroupBarrier requires uniform control flow).
-  var pos = vec2f(0.0); var vel = vec2f(0.0);
-  var spMe = -1; var energy = 0.0; var age = 0.0; var flash = 0.0;
-  if (valid) {
-    pos = inB[i].pos; vel = inB[i].vel; spMe = i32(inB[i].species);
-    energy = inB[i].energy; age = inB[i].age + P.dt;
-    flash = inB[i].flash * exp(-8.0 * P.dt); // flash fades quickly
-  }
-
-  let bmode = i32(P.birthMode);
-  let isFree         = valid && spMe < 0;
-  let isDying        = valid && spMe >= 0 && energy <= 0.0;
-  let isLiving       = valid && spMe >= 0 && energy > 0.0;
-  let isFreeAdaptive = isFree && bmode == 2;
-  let interR = P.perception * 1.6; // predators/prey sense a bit farther
-  let wq = u32(max(floor(P.time * CHAOS_RATE), 0.0));
-
-  // flocking / predator-prey accumulators (living boids)
-  var alignSum = vec2f(0.0); var cohSum = vec2f(0.0); var sepSum = vec2f(0.0);
-  var nFlock = 0.0; var nSep = 0.0;
-  var chaseSum = vec2f(0.0); var chaseN = 0.0;
-  var fleeSum  = vec2f(0.0); var fleeN  = 0.0;
-  var gotEaten = false; var eaterSp = 0; var ate = false;
-  // nearest well-fed parent (free slot, adaptive reproduction)
-  var nd = 1e30; var nsp = -1; var npos = vec2f(0.0); var nvel = vec2f(0.0);
-
-  // ── Neighbor sweep, tiled through workgroup shared memory ────────────────────
-  // Still O(n²) work, but each boid is read from global memory ~once per workgroup
-  // (into shared) instead of once per thread → far less bandwidth → much faster at
-  // high counts. ALL invocations run every tile so the barriers stay uniform.
-  let numTiles = (n + WG - 1u) / WG;
-  for (var t = 0u; t < numTiles; t = t + 1u) {
-    let base = t * WG;
-    let li = base + lid;
-    if (li < n) {
-      sPos[lid] = inB[li].pos; sVel[lid] = inB[li].vel;
-      sSp[lid]  = inB[li].species; sEn[lid] = inB[li].energy;
-    } else {
-      sSp[lid] = -1.0;
-    }
-    workgroupBarrier();
-
-    for (var k = 0u; k < WG; k = k + 1u) {
-      let j = base + k;
-      if (j < n && j != i) {
-        let so = i32(sSp[k]);
-        if (so >= 0) {
-          let opos = sPos[k];
-          if (isLiving) {
-            let diff = pos - opos;
-            let d = length(diff);
-            if (so == spMe) {
-              if (d < P.perception) { alignSum += sVel[k]; cohSum += opos; nFlock += 1.0; }
-              if (d < P.sepDist && d > 0.0) { sepSum += normalize(diff) * (1.0 - d / P.sepDist); nSep += 1.0; }
-            } else if (d < interR && d > 0.0) {
-              if (P.domMode >= 0.5) {
-                // chaos: everyone drawn to every other species; contact → symmetric coin flip
-                chaseSum += -diff; chaseN += 1.0;
-                if (d < P.killRadius) {
-                  let lo = min(i, j); let hi = max(i, j);
-                  let hit = hash3(lo, hi, wq);
-                  if (hit < CHAOS_KILL) {
-                    let w = hash3(hi, lo, wq + 7u);
-                    let iWins = select(i == hi, i == lo, w < 0.5);
-                    if (iWins) { ate = true; } else { gotEaten = true; eaterSp = so; }
-                  }
-                }
-              } else if (eats(spMe, so)) {
-                chaseSum += -diff; chaseN += 1.0;           // prey → chase it
-                if (d < P.killRadius) { ate = true; }
-              } else if (eats(so, spMe)) {
-                fleeSum += diff; fleeN += 1.0;              // predator → flee
-                if (d < P.killRadius) { gotEaten = true; eaterSp = so; }
-              }
-            }
-          }
-          if (isFreeAdaptive && sEn[k] > REPRO_E) {
-            let dd = distance(pos, opos);
-            if (dd < P.perception && dd < nd) { nd = dd; nsp = so; npos = opos; nvel = sVel[k]; }
-          }
-        }
-      }
-    }
-    workgroupBarrier();
-  }
-
-  if (!valid) { return; }
-
-  // ── Free slot (dead): respawn depending on birth mode ──────────────────────
-  if (isFree) {
-    let rGate = hash11(f32(i) * 0.017 + P.time * 7.13);
+  // ── Free slot whose birth mode needs NO neighbours (off / constant / homeland) ──
+  if (spMe < 0 && bmode != 2) {
     var born = false;
     if (bmode == 1) {
       // constant: small random trickle, random species at a random spot
@@ -230,24 +149,6 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
         pos = vec2f((hash11(f32(i) + 9.1) * 2.0 - 1.0) * P.aspect * 0.9,
                     (hash11(f32(i) + 3.3) * 2.0 - 1.0) * 0.9);
         born = true;
-      }
-    } else if (bmode == 2) {
-      // adaptive: reborn from the nearest well-fed parent found in the sweep (in-swarm).
-      // Rate adapts to swarm size (below fair share breeds faster), via adaptiveStrength.
-      if (nsp >= 0) {
-        var total = 0.0;
-        for (var s = 0; s < ns; s = s + 1) { total += popCount(s); }
-        let targetFrac = 1.0 / f32(ns);
-        let frac = popCount(nsp) / max(total, 1.0);
-        let ratio = targetFrac / max(frac, 0.001);            // >1 if below fair share
-        let factor = clamp(pow(ratio, P.adaptiveStrength), 0.0, 8.0); // strength 0 → 1 (uniform)
-        if (rGate < P.birthRate * REPRO_RATE * factor * (P.dt * 60.0)) {
-          spMe = nsp;
-          pos = npos + radialBlob(f32(i) + P.time, 0.02); // right next to the parent
-          if (length(nvel) > 0.0) { vel = normalize(nvel) * (P.maxSpeed * 0.6); }
-          else { vel = vec2f(cos(f32(i)), sin(f32(i))) * (P.maxSpeed * 0.5); }
-          born = true;
-        }
       }
     } else if (bmode == 3) {
       // homeland: nearest home region owner, below-share only (need-based).
@@ -276,11 +177,119 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
   }
 
   // ── Dying (energy ≤ 0): fade out in place, then free the slot ───────────────
-  if (isDying) {
+  if (spMe >= 0 && energy <= 0.0) {
     energy = energy - P.dt / DYING_TIME; // runs from 0 → -1 over DYING_TIME
     vel = vel * exp(-4.0 * P.dt);
     pos = pos + vel * P.dt;
     if (energy <= -1.0) { spMe = -1; } // now free
+    outB[i].pos = pos; outB[i].vel = vel;
+    outB[i].species = f32(spMe); outB[i].energy = energy; outB[i].age = age; outB[i].flash = flash;
+    return;
+  }
+
+  // Remaining: LIVING (spMe>=0, energy>0) OR FREE-ADAPTIVE (spMe<0, bmode==2).
+  let isLiving = spMe >= 0;
+  let interR = P.perception * 1.6; // predators/prey sense a bit farther
+  let wq = u32(max(floor(P.time * CHAOS_RATE), 0.0));
+
+  var alignSum = vec2f(0.0); var cohSum = vec2f(0.0); var sepSum = vec2f(0.0);
+  var nFlock = 0.0; var nSep = 0.0;
+  var chaseSum = vec2f(0.0); var chaseN = 0.0;
+  var fleeSum  = vec2f(0.0); var fleeN  = 0.0;
+  var gotEaten = false; var eaterSp = 0; var ate = false;
+  var nd = 1e30; var nsp = -1; var npos = vec2f(0.0); var nvel = vec2f(0.0);
+
+  // ── Spatial-grid neighbour sweep: the boid's own cell + the 8 around it ──────
+  // Cell size ≥ interR, so every neighbour within range lives in this 3×3 block →
+  // exactly the same neighbours the old O(n²) loop found (only summation order differs).
+  // Perf: all range tests use SQUARED distances (dot(diff,diff)) so the per-pair sqrt is
+  // avoided — in dense clumps that is millions of sqrt/frame. The real distance is only
+  // computed in the separation branch (a small subset within sepDist). Behaviour is
+  // bit-identical (d² < r²  ⇔  d < r; sqrt(d²) == length(diff)).
+  let perc2  = P.perception * P.perception;
+  let sep2   = P.sepDist * P.sepDist;
+  let inter2 = interR * interR;
+  let kill2  = P.killRadius * P.killRadius;
+  let cs = P.cellSize;
+  let gx = i32(P.gridX); let gy = i32(P.gridY);
+  let cx = clamp(i32(floor((pos.x + P.aspect) / cs)), 0, gx - 1);
+  let cy = clamp(i32(floor((pos.y + 1.0) / cs)), 0, gy - 1);
+  for (var oy = -1; oy <= 1; oy = oy + 1) {
+    let ny = cy + oy;
+    if (ny < 0 || ny >= gy) { continue; }
+    for (var ox = -1; ox <= 1; ox = ox + 1) {
+      let nx = cx + ox;
+      if (nx < 0 || nx >= gx) { continue; }
+      let cell = u32(ny) * u32(gx) + u32(nx);
+      let cS = cellStart[cell];
+      let cE = cellStart[cell + 1u];
+      for (var p = cS; p < cE; p = p + 1u) {
+        let j = sortedIdx[p];
+        if (j == i) { continue; }
+        let o = inB[j];
+        let so = i32(o.species);
+        if (so < 0) { continue; }
+        let opos = o.pos;
+        let diff = pos - opos;
+        let d2 = dot(diff, diff);
+        if (isLiving) {
+          if (so == spMe) {
+            if (d2 < perc2) { alignSum += o.vel; cohSum += opos; nFlock += 1.0; }
+            if (d2 < sep2 && d2 > 0.0) {
+              let d = sqrt(d2);
+              sepSum += diff / d * (1.0 - d / P.sepDist); nSep += 1.0;
+            }
+          } else if (d2 < inter2 && d2 > 0.0) {
+            if (P.domMode >= 0.5) {
+              // chaos: everyone drawn to every other species; contact → symmetric coin flip
+              chaseSum += -diff; chaseN += 1.0;
+              if (d2 < kill2) {
+                let lo = min(i, j); let hi = max(i, j);
+                let hit = hash3(lo, hi, wq);
+                if (hit < CHAOS_KILL) {
+                  let w = hash3(hi, lo, wq + 7u);
+                  let iWins = select(i == hi, i == lo, w < 0.5);
+                  if (iWins) { ate = true; } else { gotEaten = true; eaterSp = so; }
+                }
+              }
+            } else if (eats(spMe, so)) {
+              chaseSum += -diff; chaseN += 1.0;           // prey → chase it
+              if (d2 < kill2) { ate = true; }
+            } else if (eats(so, spMe)) {
+              fleeSum += diff; fleeN += 1.0;              // predator → flee
+              if (d2 < kill2) { gotEaten = true; eaterSp = so; }
+            }
+          }
+        } else {
+          // free-adaptive: track the nearest well-fed parent (compare squared distances)
+          if (o.energy > REPRO_E && d2 < perc2 && d2 < nd) { nd = d2; nsp = so; npos = opos; nvel = o.vel; }
+        }
+      }
+    }
+  }
+
+  // ── Free-adaptive slot: reborn from the nearest well-fed parent (in-swarm) ───
+  if (!isLiving) {
+    var born = false;
+    if (nsp >= 0) {
+      var total = 0.0;
+      for (var s = 0; s < ns; s = s + 1) { total += popCount(s); }
+      let targetFrac = 1.0 / f32(ns);
+      let frac = popCount(nsp) / max(total, 1.0);
+      let ratio = targetFrac / max(frac, 0.001);            // >1 if below fair share
+      let factor = clamp(pow(ratio, P.adaptiveStrength), 0.0, 8.0); // strength 0 → 1 (uniform)
+      if (rGate < P.birthRate * REPRO_RATE * factor * (P.dt * 60.0)) {
+        spMe = nsp;
+        // Spawn next to the parent; anti-crowd widens this a bit so birth waves don't instantly
+        // repack the swarm to peak density (still well inside the swarm, never random).
+        pos = npos + radialBlob(f32(i) + P.time, 0.02 + DECLUMP_BIRTH * P.declump);
+        if (length(nvel) > 0.0) { vel = normalize(nvel) * (P.maxSpeed * 0.6); }
+        else { vel = vec2f(cos(f32(i)), sin(f32(i))) * (P.maxSpeed * 0.5); }
+        born = true;
+      }
+    }
+    if (born) { energy = BIRTH_E; flash = 1.0; age = 0.0; }
+    else { vel = vel * exp(-3.0 * P.dt); pos += vel * P.dt; }
     outB[i].pos = pos; outB[i].vel = vel;
     outB[i].species = f32(spMe); outB[i].energy = energy; outB[i].age = age; outB[i].flash = flash;
     return;
@@ -300,6 +309,20 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
     var dSep = sepSum / nSep;
     if (length(dSep) > 0.0) { dSep = normalize(dSep) * P.maxSpeed; }
     acc += limit(dSep - vel, P.maxForce) * P.separationW;
+
+    // Crowd relief: extra outward pressure whose STRENGTH grows with the crowd COUNT (nSep) — the
+    // normal separation above is averaged + clamped to maxForce, so it saturates and lets dense
+    // clumps keep packing. This term does not saturate with density → clumps cap their own
+    // density (fewer boids per grid cell = lower O(k) cost = better FPS), and the swarm looks
+    // airier. Direction is the net away-from-neighbours vector; magnitude ∝ how crowded it is.
+    // The usable range is small (slider 0..0.1); declump = 0 → exact original behaviour.
+    if (P.declump > 0.0) {
+      let s = length(sepSum);
+      if (s > 1e-5) {
+        let mag = min(nSep, DECLUMP_CAP) * DECLUMP_PER * P.declump;
+        acc += (sepSum / s) * (P.maxForce * mag);
+      }
+    }
   }
   if (chaseN > 0.0) {
     let cdir = normalize(chaseSum);
@@ -362,6 +385,67 @@ fn main(@builtin(global_invocation_id) gid : vec3u,
 
   outB[i].pos = pos; outB[i].vel = vel;
   outB[i].species = f32(outSp); outB[i].energy = energy; outB[i].age = age; outB[i].flash = flash;
+}
+`;
+
+// ── Spatial grid build (3 tiny passes before the behavior pass) ───────────────
+// 1) count alive boids per cell (atomics) + remember each boid's cell.
+export const gridCountWGSL = /* wgsl */ `
+${BOID_STRUCT}
+${PARAMS_WGSL}
+@group(0) @binding(0) var<uniform> P : Params;
+@group(0) @binding(1) var<storage, read> inB : array<Boid>;
+@group(0) @binding(2) var<storage, read_write> cellCount : array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> cellOf : array<u32>;
+${CELL_WGSL}
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let n = u32(P.count);
+  let i = gid.x;
+  if (i >= n) { return; }
+  if (i32(inB[i].species) < 0) { cellOf[i] = 0xffffffffu; return; } // dead → not in grid
+  let c = cellOfPos(inB[i].pos, P.aspect, P.cellSize, i32(P.gridX), i32(P.gridY));
+  cellOf[i] = c;
+  atomicAdd(&cellCount[c], 1u);
+}
+`;
+
+// 2) exclusive prefix sum over the per-cell counts (single thread; numCells is small).
+export const gridScanWGSL = /* wgsl */ `
+${PARAMS_WGSL}
+@group(0) @binding(0) var<uniform> P : Params;
+@group(0) @binding(1) var<storage, read> cellCount : array<u32>;
+@group(0) @binding(2) var<storage, read_write> cellStart : array<u32>;
+@group(0) @binding(3) var<storage, read_write> cellCursor : array<u32>;
+@compute @workgroup_size(1)
+fn main() {
+  let numCells = u32(P.gridX) * u32(P.gridY);
+  var acc = 0u;
+  for (var c = 0u; c < numCells; c = c + 1u) {
+    cellStart[c] = acc;
+    cellCursor[c] = acc;   // running write cursor, consumed by the scatter pass
+    acc = acc + cellCount[c];
+  }
+  cellStart[numCells] = acc; // end sentinel (= total alive)
+}
+`;
+
+// 3) scatter each alive boid's index into its cell's slot in the sorted list.
+export const gridScatterWGSL = /* wgsl */ `
+${PARAMS_WGSL}
+@group(0) @binding(0) var<uniform> P : Params;
+@group(0) @binding(1) var<storage, read_write> cellCursor : array<atomic<u32>>;
+@group(0) @binding(2) var<storage, read_write> sortedIdx : array<u32>;
+@group(0) @binding(3) var<storage, read> cellOf : array<u32>;
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let n = u32(P.count);
+  let i = gid.x;
+  if (i >= n) { return; }
+  let c = cellOf[i];
+  if (c == 0xffffffffu) { return; } // dead → skip
+  let slot = atomicAdd(&cellCursor[c], 1u);
+  sortedIdx[slot] = i;
 }
 `;
 

@@ -15,7 +15,16 @@ import {
   SPECIES_PALETTE,
   SeedMode,
 } from "./config";
-import { computeWGSL, boidsWGSL, fadeWGSL, blitWGSL, countWGSL } from "./shaders";
+import {
+  computeWGSL,
+  boidsWGSL,
+  fadeWGSL,
+  blitWGSL,
+  countWGSL,
+  gridCountWGSL,
+  gridScanWGSL,
+  gridScatterWGSL,
+} from "./shaders";
 
 export interface BoidsHandle {
   dispose: () => void;
@@ -33,9 +42,14 @@ export interface EngineOptions {
 }
 
 const TRAIL_FORMAT: GPUTextureFormat = "rgba8unorm";
-const PARAMS_FLOATS = 24; // compute uniform (96 bytes; 24 floats incl. padding)
+const PARAMS_FLOATS = 28; // compute uniform (112 bytes; 28 floats incl. padding)
 const FLOATS_PER_BOID = 8; // pos.xy, vel.xy, species, energy, age, flash
 const MAX_DPR = 2;
+// Spatial grid: max resolution the neighbour-search grid can have. Buffers are sized for this;
+// the actual grid dims each frame are ≤ these (cell size grows with the perception radius).
+const MAX_GRID_X = 128;
+const MAX_GRID_Y = 80;
+const MAX_CELLS = MAX_GRID_X * MAX_GRID_Y; // 10240
 
 function deathModeNum(m: BoidsConfig["deathMode"]): number {
   return m === "energy" ? 1 : 0;
@@ -197,6 +211,29 @@ export async function createBoidsEngine(
   }
   writeDominance();
 
+  // ── Spatial-grid buffers (counting sort of boids into cells each frame) ──────
+  const cellCountBuf = device.createBuffer({
+    size: MAX_CELLS * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST, // COPY_DST → cleared to 0 each frame
+  });
+  const cellStartBuf = device.createBuffer({
+    size: (MAX_CELLS + 1) * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
+  const cellCursorBuf = device.createBuffer({
+    size: MAX_CELLS * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
+  const sortedBuf = device.createBuffer({
+    size: MAX_COUNT * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
+  const cellOfBuf = device.createBuffer({
+    size: MAX_COUNT * 4,
+    usage: GPUBufferUsage.STORAGE,
+  });
+  const cellZeros = new Uint32Array(MAX_CELLS); // to clear cellCount each frame
+
   let ping = 0; // ping-pong index (also reset by reseedNow)
 
   // rebuild the ecosystem (both ping-pong buffers, starting from buffer 0)
@@ -237,6 +274,33 @@ export async function createBoidsEngine(
       { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
       { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
       { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // cellStart
+      { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // sortedIdx
+    ],
+  });
+  // Grid build passes share this simple 4-slot layout shape (uniform + 3 storage).
+  const gridCountBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // inB
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellCount
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellOf
+    ],
+  });
+  const gridScanBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // cellCount
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellStart
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellCursor
+    ],
+  });
+  const gridScatterBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // cellCursor
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } }, // sortedIdx
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // cellOf
     ],
   });
   const renderBGL = device.createBindGroupLayout({
@@ -277,6 +341,19 @@ export async function createBoidsEngine(
   const countPipeline = device.createComputePipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [countBGL] }),
     compute: { module: device.createShaderModule({ code: countWGSL }), entryPoint: "main" },
+  });
+
+  const gridCountPipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [gridCountBGL] }),
+    compute: { module: device.createShaderModule({ code: gridCountWGSL }), entryPoint: "main" },
+  });
+  const gridScanPipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [gridScanBGL] }),
+    compute: { module: device.createShaderModule({ code: gridScanWGSL }), entryPoint: "main" },
+  });
+  const gridScatterPipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [gridScatterBGL] }),
+    compute: { module: device.createShaderModule({ code: gridScatterWGSL }), entryPoint: "main" },
   });
 
   const boidsModule = device.createShaderModule({ code: boidsWGSL });
@@ -343,9 +420,41 @@ export async function createBoidsEngine(
         { binding: 2, resource: { buffer: boidBuffers[1 - k] } },
         { binding: 3, resource: { buffer: popBuffer } },
         { binding: 4, resource: { buffer: domBuffer } },
+        { binding: 5, resource: { buffer: cellStartBuf } },
+        { binding: 6, resource: { buffer: sortedBuf } },
       ],
     }),
   );
+  // grid build bind groups (count reads the current inB → one per ping)
+  const gridCountGroups = [0, 1].map((k) =>
+    device.createBindGroup({
+      layout: gridCountBGL,
+      entries: [
+        { binding: 0, resource: { buffer: paramsBuffer } },
+        { binding: 1, resource: { buffer: boidBuffers[k] } },
+        { binding: 2, resource: { buffer: cellCountBuf } },
+        { binding: 3, resource: { buffer: cellOfBuf } },
+      ],
+    }),
+  );
+  const gridScanGroup = device.createBindGroup({
+    layout: gridScanBGL,
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuffer } },
+      { binding: 1, resource: { buffer: cellCountBuf } },
+      { binding: 2, resource: { buffer: cellStartBuf } },
+      { binding: 3, resource: { buffer: cellCursorBuf } },
+    ],
+  });
+  const gridScatterGroup = device.createBindGroup({
+    layout: gridScatterBGL,
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuffer } },
+      { binding: 1, resource: { buffer: cellCursorBuf } },
+      { binding: 2, resource: { buffer: sortedBuf } },
+      { binding: 3, resource: { buffer: cellOfBuf } },
+    ],
+  });
   const renderGroups = [0, 1].map((k) =>
     device.createBindGroup({
       layout: renderBGL,
@@ -488,7 +597,18 @@ export async function createBoidsEngine(
     params[18] = cfg.starveRate;
     params[19] = cfg.dominanceMode === "chaos" ? 1 : 0;
     params[20] = cfg.adaptiveStrength;
+    // spatial grid: cell size ≥ the neighbour radius (interR = perception·1.6) so a 3×3 cell
+    // block covers all neighbours; grid dims capped at MAX_GRID_* (buffers are sized for that).
+    const interR = cfg.perception * 1.6;
+    const cellSize = Math.max(interR, (2 * aspect) / MAX_GRID_X, 2 / MAX_GRID_Y);
+    const gridX = Math.min(MAX_GRID_X, Math.max(1, Math.ceil((2 * aspect) / cellSize)));
+    const gridY = Math.min(MAX_GRID_Y, Math.max(1, Math.ceil(2 / cellSize)));
+    params[21] = cellSize;
+    params[22] = gridX;
+    params[23] = gridY;
+    params[24] = cfg.declump; // anti-crowd strength (0 = off)
     device.queue.writeBuffer(paramsBuffer, 0, params);
+    device.queue.writeBuffer(cellCountBuf, 0, cellZeros, 0, gridX * gridY); // clear per-cell counts
 
     // feed population sizes into the sim, but glide toward the latest counts instead of
     // snapping. The count readback lags a few frames (GPU backpressure); snapping made the
@@ -519,12 +639,33 @@ export async function createBoidsEngine(
     if (doCount) device.queue.writeBuffer(countsBuffer, 0, countZeros); // zero the counters
 
     const encoder = device.createCommandEncoder();
+    const gridDispatch = Math.ceil(count / 64);
 
-    // 1) compute the behavior
+    // 0) build the spatial grid in THREE separate passes — dispatches within one pass are not
+    //    ordered, but consecutive passes are (each sees the previous pass's storage writes).
+    const countPass0 = encoder.beginComputePass();
+    countPass0.setPipeline(gridCountPipeline);
+    countPass0.setBindGroup(0, gridCountGroups[ping]);
+    countPass0.dispatchWorkgroups(gridDispatch);
+    countPass0.end();
+
+    const scanPass0 = encoder.beginComputePass();
+    scanPass0.setPipeline(gridScanPipeline);
+    scanPass0.setBindGroup(0, gridScanGroup);
+    scanPass0.dispatchWorkgroups(1);
+    scanPass0.end();
+
+    const scatterPass0 = encoder.beginComputePass();
+    scatterPass0.setPipeline(gridScatterPipeline);
+    scatterPass0.setBindGroup(0, gridScatterGroup);
+    scatterPass0.dispatchWorkgroups(gridDispatch);
+    scatterPass0.end();
+
+    // 1) compute the behavior (reads inB[ping] + the grid, writes inB[1-ping])
     const cpass = encoder.beginComputePass();
     cpass.setPipeline(computePipeline);
     cpass.setBindGroup(0, computeGroups[ping]);
-    cpass.dispatchWorkgroups(Math.ceil(count / 256)); // behavior compute uses workgroup_size(256)
+    cpass.dispatchWorkgroups(gridDispatch); // behavior compute uses workgroup_size(64)
     cpass.end();
 
     const latest = 1 - ping; // where the compute pass wrote to
@@ -639,6 +780,11 @@ export async function createBoidsEngine(
       stagingBuffer.destroy();
       popBuffer.destroy();
       domBuffer.destroy();
+      cellCountBuf.destroy();
+      cellStartBuf.destroy();
+      cellCursorBuf.destroy();
+      sortedBuf.destroy();
+      cellOfBuf.destroy();
       device.destroy();
     },
   };

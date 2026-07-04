@@ -51,6 +51,14 @@ export interface BoidsConfig {
   trailFade: number;
   /** Overall boid brightness. Lower keeps dense areas colorful (less white blow-out). */
   colorIntensity: number;
+  /**
+   * Crowd relief strength (usable range ~0..0.1). 0 = off (exact original look). >0 adds an
+   * outward pressure that grows with local crowding, so dense clumps thin out: airier look AND
+   * fewer boids per grid cell → lower O(k) cost → steadier FPS in heavy birth/death scenes. The
+   * range is small on purpose — beyond ~0.1 the push dominates and the swarm gets too loose. Also
+   * widens newborn spacing slightly so birth waves don't instantly repack the swarm.
+   */
+  declump: number;
   /** Background color (linear RGB, 0..1). */
   background: [number, number, number];
 
@@ -123,6 +131,7 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   boidScale: 0.007,
   trailFade: 0.17,
   colorIntensity: 0.8,
+  declump: 0, // off → exact original density; raise it to thin dense clumps (look + FPS)
   background: [0, 0, 0],
 
   numSpecies: 3,

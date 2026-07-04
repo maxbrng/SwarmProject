@@ -91,6 +91,7 @@ const SLIDERS: SliderDef[] = [
   { key: "alignWeight", label: "Alignment", min: 0, max: 3, step: 0.05, digits: 2, group: "swarm", title: "How strongly a boid matches its neighbors' heading — this creates the flocking flow." },
   { key: "cohesionWeight", label: "Cohesion", min: 0, max: 3, step: 0.05, digits: 2, group: "swarm", title: "How strongly a boid steers toward the center of its neighbors." },
   { key: "separationWeight", label: "Separation", min: 0, max: 3, step: 0.05, digits: 2, group: "swarm", title: "How strongly a boid pushes away from very close neighbors." },
+  { key: "declump", label: "Crowd relief", min: 0, max: 0.1, step: 0.005, digits: 3, group: "swarm", title: "Adds a gentle outward push that grows with how crowded a boid is, so dense clumps thin out — airier look and steadier FPS in heavy birth/death scenes (fewer boids packed into one grid cell). This range is deliberately small: even the top is subtle; beyond it the swarm gets too loose. 0 = off (original density).", display: (v) => (v === 0 ? "off" : `${Math.round((v / 0.1) * 100)}%`) },
   { key: "maxForce", label: "Agility", min: 0.1, max: 5, step: 0.05, digits: 2, group: "swarm", title: "Max steering force for cohesion/separation. Higher = snappier turns." },
   { key: "trailFade", label: "Trail length", min: 0.02, max: 1, step: 0.01, digits: 2, group: "population", title: "Length of the motion trails. Long tails ↔ almost none.", display: (v) => (v <= 0.05 ? "very long" : v >= 0.9 ? "none" : `${Math.round((1 - v) * 100)}%`) },
   { key: "boidScale", label: "Boid size", min: 0.002, max: 0.02, step: 0.0005, digits: 3, group: "population", title: "On-screen size of each boid (share of screen height).", display: pct(2) },
@@ -138,6 +139,9 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetName, setPresetName] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null); // preset currently being renamed
+  const [renameValue, setRenameValue] = useState("");
+  const [presetMsg, setPresetMsg] = useState(""); // transient confirmation message
 
   const panelRef = useRef<HTMLDivElement>(null);
   const lastOpenedRef = useRef<Group | null>(null);
@@ -301,18 +305,53 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
   function saveCurrentAsPreset() {
     const name = presetName.trim();
     if (!name) return;
-    const cfg = currentConfig();
     const idx = presets.findIndex((p) => p.name === name);
+    if (idx >= 0 && !window.confirm(`A preset “${name}” already exists — overwrite it?`)) return;
+    const cfg = currentConfig();
     const next =
       idx >= 0
         ? presets.map((p, i) => (i === idx ? { name, config: cfg } : p))
         : [...presets, { name, config: cfg }];
     persistPresets(next);
     setPresetName("");
+    flashMsg(idx >= 0 ? `✓ “${name}” overwritten` : `✓ Saved preset “${name}”`);
+  }
+
+  // Transient confirmation line under the presets (auto-clears).
+  function flashMsg(text: string) {
+    setPresetMsg(text);
+    window.setTimeout(() => setPresetMsg((m) => (m === text ? "" : m)), 2600);
+  }
+
+  // Overwrite a preset's stored values with the CURRENT settings (with a confirm prompt).
+  function overwritePreset(name: string) {
+    if (!window.confirm(`Overwrite preset “${name}” with the current settings?`)) return;
+    const cfg = currentConfig();
+    persistPresets(presets.map((p) => (p.name === name ? { name, config: cfg } : p)));
+    flashMsg(`✓ “${name}” updated with current settings`);
+  }
+
+  function startRename(name: string) {
+    setRenaming(name);
+    setRenameValue(name);
+  }
+
+  function commitRename(oldName: string) {
+    const next = renameValue.trim();
+    setRenaming(null);
+    if (!next || next === oldName) return; // no change
+    if (presets.some((p) => p.name === next)) {
+      flashMsg(`✗ A preset named “${next}” already exists`);
+      return;
+    }
+    persistPresets(presets.map((p) => (p.name === oldName ? { ...p, name: next } : p)));
+    flashMsg(`✓ Renamed to “${next}”`);
   }
 
   function deletePreset(name: string) {
+    if (!window.confirm(`Delete preset “${name}”?`)) return;
     persistPresets(presets.filter((p) => p.name !== name));
+    flashMsg(`✓ Deleted “${name}”`);
   }
 
   function renderSlider(s: SliderDef) {
@@ -401,6 +440,14 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
           ⓘ
         </button>
         <span className="panel__fps">{fps > 0 ? `${Math.round(fps)} FPS` : "…"}</span>
+        <button
+          className="panel__restart"
+          onClick={onReseed}
+          title="Restart ecosystem"
+          aria-label="Restart ecosystem"
+        >
+          ↻
+        </button>
       </div>
 
       {open && (
@@ -539,31 +586,79 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
             </div>
             {presets.length > 0 && (
               <div className="presets__list">
-                {presets.map((p) => (
-                  <div className="presets__row" key={p.name}>
-                    <button
-                      className="presets__load"
-                      onClick={() => applyConfig(p.config)}
-                      title="Load this preset"
-                    >
-                      {p.name}
-                    </button>
-                    {/* Deleting presets is dev-only; in the production/exhibition build presets
-                        can be saved but not removed. */}
-                    {IS_DEV && (
+                {presets.map((p) =>
+                  renaming === p.name ? (
+                    <div className="presets__row" key={p.name}>
+                      <input
+                        className="presets__renameInput"
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitRename(p.name);
+                          else if (e.key === "Escape") setRenaming(null);
+                        }}
+                      />
                       <button
-                        className="presets__del"
-                        onClick={() => deletePreset(p.name)}
-                        aria-label={`Delete ${p.name}`}
-                        title="Delete preset"
+                        className="presets__act presets__act--ok"
+                        onClick={() => commitRename(p.name)}
+                        title="Confirm rename"
+                        aria-label="Confirm rename"
+                      >
+                        ✓
+                      </button>
+                      <button
+                        className="presets__act"
+                        onClick={() => setRenaming(null)}
+                        title="Cancel"
+                        aria-label="Cancel rename"
                       >
                         ✕
                       </button>
-                    )}
-                  </div>
-                ))}
+                    </div>
+                  ) : (
+                    <div className="presets__row" key={p.name}>
+                      <button
+                        className="presets__load"
+                        onClick={() => applyConfig(p.config)}
+                        title="Load this preset"
+                      >
+                        {p.name}
+                      </button>
+                      <button
+                        className="presets__act"
+                        onClick={() => startRename(p.name)}
+                        title="Rename preset"
+                        aria-label={`Rename ${p.name}`}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        className="presets__act"
+                        onClick={() => overwritePreset(p.name)}
+                        title="Overwrite this preset with the current settings"
+                        aria-label={`Overwrite ${p.name}`}
+                      >
+                        ⤓
+                      </button>
+                      {/* Deleting is dev-only; the production/exhibition build can save/rename/
+                          overwrite presets but not remove them. */}
+                      {IS_DEV && (
+                        <button
+                          className="presets__del"
+                          onClick={() => deletePreset(p.name)}
+                          aria-label={`Delete ${p.name}`}
+                          title="Delete preset"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  ),
+                )}
               </div>
             )}
+            {presetMsg && <div className="presets__msg">{presetMsg}</div>}
           </div>
 
           {IS_DEV && (

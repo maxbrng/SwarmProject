@@ -326,6 +326,64 @@ body {
   background: rgba(255, 120, 120, 0.22);
 }
 
+/* Rename / overwrite action buttons on a preset row */
+.presets__act {
+  width: 26px;
+  border-radius: 7px;
+  border: 1px solid rgba(120, 160, 230, 0.22);
+  background: rgba(255, 255, 255, 0.05);
+  color: #cfe0ff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.presets__act:hover {
+  background: rgba(91, 140, 255, 0.22);
+}
+
+.presets__act--ok {
+  border-color: rgba(95, 220, 150, 0.4);
+  background: rgba(95, 220, 150, 0.16);
+  color: #b6f5d0;
+}
+
+.presets__renameInput {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border-radius: 7px;
+  border: 1px solid rgba(120, 160, 230, 0.45);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eaf1ff;
+  font-size: 12px;
+}
+
+/* Transient confirmation line under the presets */
+.presets__msg {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  color: #9fe6bf;
+}
+
+/* Small restart button in the panel header (visible even when the panel is collapsed) */
+.panel__restart {
+  border-radius: 7px;
+  border: 1px solid rgba(120, 160, 230, 0.3);
+  background: rgba(91, 140, 255, 0.16);
+  color: #cfe0ff;
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.panel__restart:hover {
+  background: rgba(91, 140, 255, 0.3);
+}
+
 .panel__head {
   display: flex;
   align-items: center;

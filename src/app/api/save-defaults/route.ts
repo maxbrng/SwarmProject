@@ -21,6 +21,7 @@ const KEYS = [
   "boidScale",
   "trailFade",
   "colorIntensity",
+  "declump",
   "numSpecies",
   "chaseWeight",
   "fleeWeight",
