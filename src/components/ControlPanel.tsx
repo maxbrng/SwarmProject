@@ -14,6 +14,7 @@ import {
 } from "@/webgpu/boids/config";
 import HelpModal from "./HelpModal";
 import ColorSwatch from "./ColorSwatch";
+import { BUILTIN_PRESETS, type Preset } from "@/webgpu/boids/presets";
 
 interface Props {
   onChange: (partial: Partial<BoidsConfig>) => void;
@@ -40,12 +41,11 @@ const cloneColors = (cs: RGB[]): RGB[] => cs.map((c) => [c[0], c[1], c[2]] as RG
 
 type Group = "count" | "swarm" | "population" | "dynamics";
 
-/** A named, saved configuration (stored in the browser via localStorage). */
-interface Preset {
-  name: string;
-  config: Partial<BoidsConfig>;
-}
-const PRESETS_KEY = "swarm-presets-v1";
+// Presets ship baked into code (BUILTIN_PRESETS) so they're identical in every production build,
+// on every device. In dev they're editable and persisted to localStorage as a working copy;
+// "Publish presets to code" bakes that working copy into presets.ts. In production they're
+// read-only (load only) and come straight from code — localStorage is ignored there.
+const PRESETS_KEY = "swarm-presets-v1"; // dev-only working copy
 const IS_DEV = process.env.NODE_ENV !== "production";
 
 const BIRTH_MODES: { value: BirthMode; label: string; title: string }[] = [
@@ -137,6 +137,7 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
     dynamics: true,
   });
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [pubState, setPubState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetName, setPresetName] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null); // preset currently being renamed
@@ -146,13 +147,20 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
   const lastOpenedRef = useRef<Group | null>(null);
 
-  // Load saved presets from the browser once on mount.
+  // Seed the preset list once on mount.
+  // Production: read-only, straight from code (BUILTIN_PRESETS) — same on every device.
+  // Dev: use the localStorage working copy; if empty, seed it from the shipped presets so you
+  //      keep editing where the code left off.
   useEffect(() => {
+    if (!IS_DEV) {
+      setPresets(BUILTIN_PRESETS);
+      return;
+    }
     try {
       const raw = localStorage.getItem(PRESETS_KEY);
-      if (raw) setPresets(JSON.parse(raw));
+      setPresets(raw ? JSON.parse(raw) : BUILTIN_PRESETS);
     } catch {
-      /* ignore */
+      setPresets(BUILTIN_PRESETS);
     }
   }, []);
 
@@ -275,12 +283,38 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
 
   function persistPresets(next: Preset[]) {
     setPresets(next);
+    if (!IS_DEV) return; // production presets are read-only (baked into code)
     try {
       localStorage.setItem(PRESETS_KEY, JSON.stringify(next));
     } catch {
       /* ignore */
     }
   }
+
+  // Dev-only: bake the current working presets into presets.ts (BUILTIN_PRESETS) so they ship
+  // with the app and show up in production on every device.
+  async function publishPresets() {
+    setPubState("saving");
+    try {
+      const res = await fetch("/api/save-presets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ presets }),
+      });
+      const data = await res.json().catch(() => ({ ok: false }));
+      setPubState(res.ok && data.ok ? "saved" : "error");
+    } catch {
+      setPubState("error");
+    }
+    setTimeout(() => setPubState("idle"), 2500);
+  }
+
+  const pubLabel = {
+    idle: "⤴ Publish presets to code",
+    saving: "Publishing …",
+    saved: "✓ Published (commit presets.ts)",
+    error: "✗ Error – is the dev server running?",
+  }[pubState];
 
   function currentConfig(): Partial<BoidsConfig> {
     return { ...values, deathMode: mode, seedMode, birthMode, dominanceMode, speciesColors: cloneColors(colors) };
@@ -561,33 +595,38 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
             </>,
           )}
 
-          {/* Presets — save / select / edit multiple configurations (stored in your browser) */}
+          {/* Presets — baked into code so they're identical in every production build / device.
+              Dev: editable working copy (localStorage) + "Publish presets to code".
+              Production: read-only, load only. */}
           <div className="presets">
             <div className="presets__head">Presets</div>
-            <div className="presets__save">
-              <input
-                className="presets__input"
-                type="text"
-                placeholder="Preset name…"
-                value={presetName}
-                onChange={(e) => setPresetName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveCurrentAsPreset();
-                }}
-              />
-              <button
-                className="presets__btn"
-                onClick={saveCurrentAsPreset}
-                disabled={!presetName.trim()}
-                title="Save the current settings as a preset (overwrites if the name exists)."
-              >
-                Save
-              </button>
-            </div>
-            {presets.length > 0 && (
+            {/* Creating presets is dev-only; production ships them read-only. */}
+            {IS_DEV && (
+              <div className="presets__save">
+                <input
+                  className="presets__input"
+                  type="text"
+                  placeholder="Preset name…"
+                  value={presetName}
+                  onChange={(e) => setPresetName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveCurrentAsPreset();
+                  }}
+                />
+                <button
+                  className="presets__btn"
+                  onClick={saveCurrentAsPreset}
+                  disabled={!presetName.trim()}
+                  title="Save the current settings as a preset (overwrites if the name exists)."
+                >
+                  Save
+                </button>
+              </div>
+            )}
+            {presets.length > 0 ? (
               <div className="presets__list">
                 {presets.map((p) =>
-                  renaming === p.name ? (
+                  IS_DEV && renaming === p.name ? (
                     <div className="presets__row" key={p.name}>
                       <input
                         className="presets__renameInput"
@@ -625,38 +664,52 @@ export default function ControlPanel({ onChange, onReseed, fps }: Props) {
                       >
                         {p.name}
                       </button>
-                      <button
-                        className="presets__act"
-                        onClick={() => startRename(p.name)}
-                        title="Rename preset"
-                        aria-label={`Rename ${p.name}`}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        className="presets__act"
-                        onClick={() => overwritePreset(p.name)}
-                        title="Overwrite this preset with the current settings"
-                        aria-label={`Overwrite ${p.name}`}
-                      >
-                        ⤓
-                      </button>
-                      {/* Deleting is dev-only; the production/exhibition build can save/rename/
-                          overwrite presets but not remove them. */}
+                      {/* Editing (rename / overwrite / delete) is dev-only; production presets
+                          are read-only and come straight from code. */}
                       {IS_DEV && (
-                        <button
-                          className="presets__del"
-                          onClick={() => deletePreset(p.name)}
-                          aria-label={`Delete ${p.name}`}
-                          title="Delete preset"
-                        >
-                          ✕
-                        </button>
+                        <>
+                          <button
+                            className="presets__act"
+                            onClick={() => startRename(p.name)}
+                            title="Rename preset"
+                            aria-label={`Rename ${p.name}`}
+                          >
+                            ✎
+                          </button>
+                          <button
+                            className="presets__act"
+                            onClick={() => overwritePreset(p.name)}
+                            title="Overwrite this preset with the current settings"
+                            aria-label={`Overwrite ${p.name}`}
+                          >
+                            ⤓
+                          </button>
+                          <button
+                            className="presets__del"
+                            onClick={() => deletePreset(p.name)}
+                            aria-label={`Delete ${p.name}`}
+                            title="Delete preset"
+                          >
+                            ✕
+                          </button>
+                        </>
                       )}
                     </div>
                   ),
                 )}
               </div>
+            ) : (
+              !IS_DEV && <div className="presets__msg">No presets shipped yet.</div>
+            )}
+            {IS_DEV && (
+              <button
+                className={`presets__publish presets__publish--${pubState}`}
+                onClick={publishPresets}
+                disabled={pubState === "saving"}
+                title="Bake the current presets into presets.ts so they ship with the app and appear in production on every device. Dev only — commit presets.ts afterward."
+              >
+                {pubLabel}
+              </button>
             )}
             {presetMsg && <div className="presets__msg">{presetMsg}</div>}
           </div>

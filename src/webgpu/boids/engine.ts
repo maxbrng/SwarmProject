@@ -39,12 +39,25 @@ export interface EngineOptions {
   onFps?: (fps: number) => void;
   /** Alive boids per species (length MAX_SPECIES), several times per second. */
   onCounts?: (counts: number[]) => void;
+  /**
+   * Live swirl state for a subtle visual overlay (called every frame). Center + radius in CSS
+   * pixels relative to the canvas, amp is the 0..1 activation envelope. amp ≈ 0 ⇒ nothing to draw.
+   */
+  onSwirl?: (s: { cx: number; cy: number; r: number; amp: number }) => void;
+  /** Called when the swirl direction flips (±1), e.g. via the stir gesture — to sync the UI. */
+  onSwirlDir?: (dir: number) => void;
 }
 
 const TRAIL_FORMAT: GPUTextureFormat = "rgba8unorm";
-const PARAMS_FLOATS = 28; // compute uniform (112 bytes; 28 floats incl. padding)
+const PARAMS_FLOATS = 36; // compute uniform (144 bytes; 24=declump, 25..32=swirl vortex + dir)
 const FLOATS_PER_BOID = 8; // pos.xy, vel.xy, species, energy, age, flash
 const MAX_DPR = 2;
+// Stir gesture: rotating the finger sets the swirl direction. We accumulate the per-frame turn
+// (sin of the angle between consecutive move vectors, speed-independent) and flip when a clear
+// rotation is reached. Straight drags have ~0 turn → they only move the vortex, never flip it.
+const STIR_MOVE_EPS = 0.002; // min per-frame move (normalized) to count as motion
+const STIR_DECAY = 0.9; // how fast the accumulated turn fades (per frame)
+const STIR_TH = 1.2; // accumulated turn needed to flip direction (~a clear arc)
 // Spatial grid: max resolution the neighbour-search grid can have. Buffers are sized for this;
 // the actual grid dims each frame are ≤ these (cell size grows with the perception radius).
 const MAX_GRID_X = 128;
@@ -536,6 +549,63 @@ export async function createBoidsEngine(
   }
   watchDpr();
 
+  // ── Swirl interaction (single-finger touch → vortex) ─────────────────────────
+  // Track every active pointer by id (Pointer Events → real multi-touch). The swirl only runs
+  // while EXACTLY ONE finger is down; two or more fingers switch it off (reserved for later
+  // multi-finger gestures). The center follows that finger; a smooth amp envelope ramps the
+  // effect in on touch and back out on release, so the swarm heals itself.
+  const activePointers = new Map<number, { nx: number; ny: number }>();
+  let swirlX = 0;
+  let swirlY = 0;
+  let swirlAmp = 0;
+  let lastNx = 0.5; // last pointer position (normalized), kept so the overlay stays put while healing
+  let lastNy = 0.5;
+  // stir-gesture bookkeeping
+  let prevNx = 0.5;
+  let prevNy = 0.5;
+  let prevMvX = 0;
+  let prevMvY = 0;
+  let turnAccum = 0;
+
+  // Change the swirl direction and let the UI know (keeps the panel button in sync with gestures).
+  function applyDir(d: number) {
+    if (cfg.swirlDir === d) return;
+    cfg.swirlDir = d;
+    opts.onSwirlDir?.(d);
+  }
+
+  function pointerNorm(e: PointerEvent): { nx: number; ny: number } {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      nx: (e.clientX - rect.left) / Math.max(1, rect.width),
+      ny: (e.clientY - rect.top) / Math.max(1, rect.height),
+    };
+  }
+  function onPointerDown(e: PointerEvent) {
+    activePointers.set(e.pointerId, pointerNorm(e));
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* capture is best-effort */
+    }
+  }
+  function onPointerMove(e: PointerEvent) {
+    if (!activePointers.has(e.pointerId)) return;
+    activePointers.set(e.pointerId, pointerNorm(e));
+  }
+  function onPointerUp(e: PointerEvent) {
+    activePointers.delete(e.pointerId);
+    try {
+      canvas.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  }
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerUp);
+
   // ── Frame loop ───────────────────────────────────────────────────────────────
   const bg = cfg.background;
   const startTime = performance.now();
@@ -607,7 +677,78 @@ export async function createBoidsEngine(
     params[22] = gridX;
     params[23] = gridY;
     params[24] = cfg.declump; // anti-crowd strength (0 = off)
+
+    // swirl: exactly one finger → the vortex follows it and ramps up; otherwise it fades out
+    // in place (0 or ≥2 fingers). Center is in sim space (y up, x aspect-scaled), matching pos.
+    const oneFinger = activePointers.size === 1;
+    let targetAmp = 0;
+    if (oneFinger) {
+      const p = activePointers.values().next().value;
+      if (p) {
+        lastNx = p.nx;
+        lastNy = p.ny;
+        swirlX = (p.nx * 2 - 1) * aspect;
+        swirlY = 1 - p.ny * 2;
+        targetAmp = 1;
+      }
+    }
+    const ramp = targetAmp > swirlAmp ? cfg.swirlRampUp : cfg.swirlRampDown;
+    const kAmp = ramp > 0 ? Math.min(1, dt / ramp) : 1;
+    swirlAmp += (targetAmp - swirlAmp) * kAmp;
+
+    // Stir gesture: a curved finger motion sets the rotation direction; a straight drag doesn't.
+    if (oneFinger) {
+      const mvX = lastNx - prevNx;
+      const mvY = lastNy - prevNy;
+      const ncur = Math.hypot(mvX, mvY);
+      if (ncur > STIR_MOVE_EPS) {
+        const nprev = Math.hypot(prevMvX, prevMvY);
+        if (nprev > STIR_MOVE_EPS) {
+          // sin of the turn between consecutive move vectors (screen coords, y down)
+          const sinTurn = (prevMvX * mvY - prevMvY * mvX) / (nprev * ncur);
+          turnAccum = turnAccum * STIR_DECAY + sinTurn;
+          // screen-CW stir (turnAccum > 0) → clockwise swirl (dir -1), and vice versa
+          if (turnAccum > STIR_TH && cfg.swirlDir > 0) {
+            applyDir(-1);
+            turnAccum = 0;
+          } else if (turnAccum < -STIR_TH && cfg.swirlDir < 0) {
+            applyDir(1);
+            turnAccum = 0;
+          }
+        }
+        prevMvX = mvX;
+        prevMvY = mvY;
+      }
+      prevNx = lastNx;
+      prevNy = lastNy;
+    } else {
+      turnAccum = 0;
+      prevMvX = 0;
+      prevMvY = 0;
+      prevNx = lastNx;
+      prevNy = lastNy;
+    }
+    params[25] = swirlX;
+    params[26] = swirlY;
+    params[27] = swirlAmp;
+    params[28] = cfg.swirlStrength;
+    params[29] = cfg.swirlRadius;
+    params[30] = cfg.swirlFalloff;
+    params[31] = cfg.swirlInward;
+    params[32] = cfg.swirlDir;
     device.queue.writeBuffer(paramsBuffer, 0, params);
+
+    // feed the subtle visual swirl overlay: center + radius in CSS px + envelope.
+    if (opts.onSwirl) {
+      const cw = canvas.clientWidth || 1;
+      const ch = canvas.clientHeight || 1;
+      opts.onSwirl({
+        cx: lastNx * cw,
+        cy: lastNy * ch,
+        r: cfg.swirlRadius * (ch / 2), // sim half-height (1 unit) = ch/2 px
+        amp: swirlAmp,
+      });
+    }
     device.queue.writeBuffer(cellCountBuf, 0, cellZeros, 0, gridX * gridY); // clear per-cell counts
 
     // feed population sizes into the sim, but glide toward the latest counts instead of
@@ -769,6 +910,10 @@ export async function createBoidsEngine(
       cancelAnimationFrame(raf);
       ro.disconnect();
       dprMedia?.removeEventListener("change", onDprChange);
+      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointercancel", onPointerUp);
       trailTexture?.destroy();
       boidBuffers.forEach((b) => b.destroy());
       paramsBuffer.destroy();

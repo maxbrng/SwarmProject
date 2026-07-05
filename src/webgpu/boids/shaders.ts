@@ -14,9 +14,10 @@ struct Boid {
 };
 `;
 
-// Shared Params uniform (28 floats / 112 bytes). Indices 21..23 carry the spatial-grid
-// parameters (cell size + grid dims), 24 is the anti-crowd strength. Written by the engine
-// each frame. 25..27 pad the struct to a multiple of 16 bytes (7×vec4).
+// Shared Params uniform (36 floats / 144 bytes). Indices 21..23 carry the spatial-grid
+// parameters (cell size + grid dims), 24 is the anti-crowd strength, 25..32 the swirl vortex
+// (live center + activation envelope from the pointer, plus its shape + direction). Written by
+// the engine each frame. 36 floats = 9×vec4 → 16-byte aligned; 33..35 pad the struct.
 const PARAMS_WGSL = /* wgsl */ `
 struct Params {
   dt : f32, perception : f32, sepDist : f32, maxSpeed : f32, maxForce : f32,
@@ -24,7 +25,9 @@ struct Params {
   time : f32, numSpecies : f32, chaseW : f32, fleeW : f32, killRadius : f32,
   birthRate : f32, deathMode : f32, birthMode : f32, starveRate : f32, domMode : f32,
   adaptiveStrength : f32, cellSize : f32, gridX : f32, gridY : f32,
-  declump : f32, _pg0 : f32, _pg1 : f32, _pg2 : f32,
+  declump : f32, swirlX : f32, swirlY : f32, swirlAmp : f32,
+  swirlStrength : f32, swirlRadius : f32, swirlFalloff : f32, swirlInward : f32,
+  swirlDir : f32, _pg0 : f32, _pg1 : f32, _pg2 : f32,
 };
 `;
 
@@ -368,6 +371,24 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   let spd = length(vel);
   let minSp = P.maxSpeed * 0.5;
   if (spd < minSp && spd > 0.0) { vel = vel / spd * minSp; }
+
+  // ── Swirl (touch vortex): drag the swarm around the finger, faster toward the center ──
+  // A local, temporary "brush": inside swirlRadius the velocity is blended toward a tangential
+  // orbit; the blend (and thus the effect) is strongest in the middle and fades to the edge.
+  // Applied AFTER the speed clamp so the center can genuinely whip faster than maxSpeed
+  // (swirlStrength > 1). swirlAmp ramps 0→1 on touch and back to 0 on release → self-healing.
+  if (P.swirlAmp > 0.001) {
+    let rel = pos - vec2f(P.swirlX, P.swirlY);
+    let r = length(rel);
+    if (r > 1e-4 && r < P.swirlRadius) {
+      let rn = r / P.swirlRadius;                              // 0 = center … 1 = edge
+      let profile = pow(1.0 - rn, max(P.swirlFalloff, 0.05));  // inner faster, outer slower
+      let radial = rel / r;                                    // outward unit
+      let tangent = vec2f(-radial.y, radial.x) * P.swirlDir;   // orbit unit (±1 = CCW/CW)
+      let desired = normalize(tangent + radial * P.swirlInward) * (P.maxSpeed * P.swirlStrength);
+      vel = mix(vel, desired, clamp(profile * P.swirlAmp, 0.0, 1.0));
+    }
+  }
 
   pos += vel * P.dt;
 
