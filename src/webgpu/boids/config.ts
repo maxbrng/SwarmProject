@@ -62,6 +62,25 @@ export interface BoidsConfig {
   /** Background color (linear RGB, 0..1). */
   background: [number, number, number];
 
+  // ── Stage 1.5: swirl interaction (single-finger touch → vortex) ─────────────
+  // A "brush" that only twists the existing swarm locally and temporarily; it heals when the
+  // finger lifts. Rotation is strongest in the center and fades to the edge (vortex feel).
+  // These values are meant to be dialed in via the temporary SwirlPanel, then baked as defaults.
+  /** Peak swirl speed at the center, as a multiple of maxSpeed (can exceed the normal cap). */
+  swirlStrength: number;
+  /** Influence radius of the vortex (sim units; sim height = 2). Outside it nothing changes. */
+  swirlRadius: number;
+  /** Inner-faster profile exponent: higher = rotation concentrates harder toward the center. */
+  swirlFalloff: number;
+  /** Radial bias: 0 = pure orbit, <0 pushes boids outward, >0 sucks them inward. Range ~-1..1. */
+  swirlInward: number;
+  /** Rotation direction: +1 = counter-clockwise, -1 = clockwise. Toggled live in the panel. */
+  swirlDir: number;
+  /** Seconds for the swirl to build up to full strength after touch-down (feel). */
+  swirlRampUp: number;
+  /** Seconds for the swirl to fade back out after the finger lifts (self-healing). */
+  swirlRampDown: number;
+
   // ── Stage 2: species / predator-prey ───────────────────────────────────────
   /** Number of species/populations (1 … MAX_SPECIES; 1 = single flock, no predator-prey). */
   numSpecies: number;
@@ -133,6 +152,15 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   colorIntensity: 0.8,
   declump: 0, // off → exact original density; raise it to thin dense clumps (look + FPS)
   background: [0, 0, 0],
+
+  // swirl (tune live in the SwirlPanel, then bake here)
+  swirlStrength: 2.5,
+  swirlRadius: 0.4,
+  swirlFalloff: 1.6,
+  swirlInward: 0,
+  swirlDir: 1,
+  swirlRampUp: 0.12,
+  swirlRampDown: 0.5,
 
   numSpecies: 3,
   chaseWeight: 1.2,
