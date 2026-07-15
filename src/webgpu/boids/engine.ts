@@ -24,6 +24,10 @@ import {
   gridCountWGSL,
   gridScanWGSL,
   gridScatterWGSL,
+  terrainWGSL,
+  terrainEditWGSL,
+  DELTA_W,
+  DELTA_H,
 } from "./shaders";
 
 export interface BoidsHandle {
@@ -32,6 +36,8 @@ export interface BoidsHandle {
   update: (partial: Partial<BoidsConfig>) => void;
   /** Restart the ecosystem (with the current seedMode/numSpecies). */
   reseed: () => void;
+  /** Erase all sculpted terrain (reset the delta buffer to 0). */
+  clearTerrain: () => void;
 }
 
 export interface EngineOptions {
@@ -49,7 +55,7 @@ export interface EngineOptions {
 }
 
 const TRAIL_FORMAT: GPUTextureFormat = "rgba8unorm";
-const PARAMS_FLOATS = 36; // compute uniform (144 bytes; 24=declump, 25..32=swirl vortex + dir)
+const PARAMS_FLOATS = 40; // compute uniform (160 bytes; 33..36 = terrain force/scale/drift/coverage)
 const FLOATS_PER_BOID = 8; // pos.xy, vel.xy, species, energy, age, flash
 const MAX_DPR = 2;
 // Stir gesture: rotating the finger sets the swirl direction. We accumulate the per-frame turn
@@ -270,6 +276,23 @@ export async function createBoidsEngine(
     size: 4 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
+  // TerrainParams uniform: 24 floats / 96 bytes (aspect,time,scale,drift, line*, valley/mid/peak/snow vec4)
+  const terrainParamsBuffer = device.createBuffer({
+    size: 24 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  // Sculpted terrain delta: mutable f32 height field over screen uv (added on top of terrainH).
+  const deltaBuffer = device.createBuffer({
+    size: DELTA_W * DELTA_H * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  const deltaZeros = new Float32Array(DELTA_W * DELTA_H);
+  device.queue.writeBuffer(deltaBuffer, 0, deltaZeros); // start flat
+  // Brush uniform for the edit pass (12 floats).
+  const editParamsBuffer = device.createBuffer({
+    size: 12 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
 
   // triangle geometry per boid (+y = front)
   const triangle = new Float32Array([0.0, 1.0, -0.6, -0.8, 0.6, -0.8]);
@@ -289,6 +312,14 @@ export async function createBoidsEngine(
       { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
       { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // cellStart
       { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // sortedIdx
+      { binding: 7, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } }, // terrain delta
+    ],
+  });
+  // Terrain edit (brush): uniform + read-write delta storage.
+  const terrainEditBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
     ],
   });
   // Grid build passes share this simple 4-slot layout shape (uniform + 3 storage).
@@ -342,6 +373,12 @@ export async function createBoidsEngine(
     entries: [
       { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "filtering" } },
       { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+    ],
+  });
+  const terrainBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } }, // delta
     ],
   });
 
@@ -419,8 +456,36 @@ export async function createBoidsEngine(
   const blitPipeline = device.createRenderPipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [blitBGL] }),
     vertex: { module: blitModule, entryPoint: "vs" },
-    fragment: { module: blitModule, entryPoint: "fs", targets: [{ format: canvasFormat }] },
+    fragment: {
+      module: blitModule,
+      entryPoint: "fs",
+      // Additive: the swarm glow is added on top of the terrain drawn first. Over pure black
+      // (terrain disabled) this is identical to the old opaque copy → same look when off.
+      targets: [
+        {
+          format: canvasFormat,
+          blend: {
+            color: { srcFactor: "one", dstFactor: "one", operation: "add" },
+            alpha: { srcFactor: "one", dstFactor: "one", operation: "add" },
+          },
+        },
+      ],
+    },
     primitive: { topology: "triangle-list" },
+  });
+
+  // Terrain: draws the contour-line relief into the canvas BEFORE the swarm blit.
+  const terrainModule = device.createShaderModule({ code: terrainWGSL });
+  const terrainPipeline = device.createRenderPipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [terrainBGL] }),
+    vertex: { module: terrainModule, entryPoint: "vs" },
+    fragment: { module: terrainModule, entryPoint: "fs", targets: [{ format: canvasFormat }] },
+    primitive: { topology: "triangle-list" },
+  });
+
+  const terrainEditPipeline = device.createComputePipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [terrainEditBGL] }),
+    compute: { module: device.createShaderModule({ code: terrainEditWGSL }), entryPoint: "main" },
   });
 
   // ── Bind groups ──────────────────────────────────────────────────────────────
@@ -435,9 +500,17 @@ export async function createBoidsEngine(
         { binding: 4, resource: { buffer: domBuffer } },
         { binding: 5, resource: { buffer: cellStartBuf } },
         { binding: 6, resource: { buffer: sortedBuf } },
+        { binding: 7, resource: { buffer: deltaBuffer } },
       ],
     }),
   );
+  const terrainEditGroup = device.createBindGroup({
+    layout: terrainEditBGL,
+    entries: [
+      { binding: 0, resource: { buffer: editParamsBuffer } },
+      { binding: 1, resource: { buffer: deltaBuffer } },
+    ],
+  });
   // grid build bind groups (count reads the current inB → one per ping)
   const gridCountGroups = [0, 1].map((k) =>
     device.createBindGroup({
@@ -491,6 +564,13 @@ export async function createBoidsEngine(
   const fadeGroup = device.createBindGroup({
     layout: fadeBGL,
     entries: [{ binding: 0, resource: { buffer: fadeBuffer } }],
+  });
+  const terrainGroup = device.createBindGroup({
+    layout: terrainBGL,
+    entries: [
+      { binding: 0, resource: { buffer: terrainParamsBuffer } },
+      { binding: 1, resource: { buffer: deltaBuffer } },
+    ],
   });
 
   const sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
@@ -615,6 +695,8 @@ export async function createBoidsEngine(
 
   const params = new Float32Array(PARAMS_FLOATS);
   const renderParams = new Float32Array(8);
+  const terrainParams = new Float32Array(24);
+  const editParams = new Float32Array(12); // brush uniform for the sculpt pass
 
   // FPS averaging
   let fpsAccum = 0;
@@ -678,11 +760,27 @@ export async function createBoidsEngine(
     params[23] = gridY;
     params[24] = cfg.declump; // anti-crowd strength (0 = off)
 
-    // swirl: exactly one finger → the vortex follows it and ramps up; otherwise it fades out
-    // in place (0 or ≥2 fingers). Center is in sim space (y up, x aspect-scaled), matching pos.
+    // Tool decides what a single finger does: with a sculpt tool active it PAINTS the terrain
+    // (brush); otherwise it drives the swirl vortex. ≥2 fingers do neither (reserved).
+    const sculptMode = cfg.terrainEnabled && cfg.terrainTool !== "off";
     const oneFinger = activePointers.size === 1;
+    let brushActive = 0;
+    let brushU = 0.5;
+    let brushV = 0.5;
+    if (sculptMode && oneFinger) {
+      const p = activePointers.values().next().value;
+      if (p) {
+        brushU = p.nx;
+        brushV = p.ny;
+        brushActive = 1;
+      }
+    }
+
+    // swirl: exactly one finger AND no sculpt tool → the vortex follows it and ramps up; otherwise
+    // it fades out in place. Center is in sim space (y up, x aspect-scaled), matching pos.
+    const swirlFinger = oneFinger && !sculptMode;
     let targetAmp = 0;
-    if (oneFinger) {
+    if (swirlFinger) {
       const p = activePointers.values().next().value;
       if (p) {
         lastNx = p.nx;
@@ -697,7 +795,7 @@ export async function createBoidsEngine(
     swirlAmp += (targetAmp - swirlAmp) * kAmp;
 
     // Stir gesture: a curved finger motion sets the rotation direction; a straight drag doesn't.
-    if (oneFinger) {
+    if (swirlFinger) {
       const mvX = lastNx - prevNx;
       const mvY = lastNy - prevNy;
       const ncur = Math.hypot(mvX, mvY);
@@ -736,7 +834,54 @@ export async function createBoidsEngine(
     params[30] = cfg.swirlFalloff;
     params[31] = cfg.swirlInward;
     params[32] = cfg.swirlDir;
+    // terrain: downhill push weight (0 when disabled → boids ignore the relief), spatial freq, drift
+    params[33] = cfg.terrainEnabled ? cfg.terrainForce : 0;
+    params[34] = cfg.terrainScale;
+    params[35] = cfg.terrainDrift;
+    params[36] = cfg.terrainCoverage;
+    params[37] = cfg.terrainWarp;
     device.queue.writeBuffer(paramsBuffer, 0, params);
+
+    // terrain render uniform (must use the SAME scale/drift as the sim so drawn ⇄ felt line up)
+    const simTime = (now - startTime) / 1000;
+    terrainParams[0] = aspect;
+    terrainParams[1] = simTime;
+    terrainParams[2] = cfg.terrainScale;
+    terrainParams[3] = cfg.terrainDrift;
+    terrainParams[4] = cfg.terrainLineCount;
+    terrainParams[5] = cfg.terrainLineWidth;
+    terrainParams[6] = cfg.terrainLineBright;
+    terrainParams[7] = cfg.terrainTint;
+    terrainParams[8] = cfg.terrainValley[0];
+    terrainParams[9] = cfg.terrainValley[1];
+    terrainParams[10] = cfg.terrainValley[2];
+    terrainParams[11] = cfg.terrainCoverage; // valley.a = terrainCoverage (shared with the sim)
+    terrainParams[12] = cfg.terrainMid[0];
+    terrainParams[13] = cfg.terrainMid[1];
+    terrainParams[14] = cfg.terrainMid[2];
+    terrainParams[15] = cfg.terrainWarp; // mid.a = terrainWarp (shared with the sim)
+    terrainParams[16] = cfg.terrainPeak[0];
+    terrainParams[17] = cfg.terrainPeak[1];
+    terrainParams[18] = cfg.terrainPeak[2];
+    terrainParams[19] = cfg.terrainShade; // peak.a = hill-shading strength
+    terrainParams[20] = cfg.terrainSnow[0];
+    terrainParams[21] = cfg.terrainSnow[1];
+    terrainParams[22] = cfg.terrainSnow[2];
+    terrainParams[23] = cfg.terrainSnowAmount; // snow.a = cap strength
+    device.queue.writeBuffer(terrainParamsBuffer, 0, terrainParams);
+
+    // brush uniform for the sculpt pass (heal always runs; the brush adds only while held)
+    editParams[0] = brushU;
+    editParams[1] = brushV;
+    editParams[2] = cfg.terrainBrushSize;
+    editParams[3] = cfg.terrainBrushStrength * (cfg.terrainTool === "lower" ? -1 : 1);
+    editParams[4] = cfg.terrainBrushDetail;
+    editParams[5] = cfg.terrainHealRate;
+    editParams[6] = brushActive;
+    editParams[7] = dt;
+    editParams[8] = aspect;
+    editParams[9] = (now - startTime) / 1000;
+    device.queue.writeBuffer(editParamsBuffer, 0, editParams);
 
     // feed the subtle visual swirl overlay: center + radius in CSS px + envelope.
     if (opts.onSwirl) {
@@ -781,6 +926,16 @@ export async function createBoidsEngine(
 
     const encoder = device.createCommandEncoder();
     const gridDispatch = Math.ceil(count / 64);
+
+    // −1) terrain sculpt: heal the delta + apply the brush. Runs first so the sim and the render
+    //     this frame both see the updated relief. Only when terrain is enabled.
+    if (cfg.terrainEnabled) {
+      const editPass = encoder.beginComputePass();
+      editPass.setPipeline(terrainEditPipeline);
+      editPass.setBindGroup(0, terrainEditGroup);
+      editPass.dispatchWorkgroups(Math.ceil((DELTA_W * DELTA_H) / 64));
+      editPass.end();
+    }
 
     // 0) build the spatial grid in THREE separate passes — dispatches within one pass are not
     //    ordered, but consecutive passes are (each sees the previous pass's storage writes).
@@ -845,6 +1000,12 @@ export async function createBoidsEngine(
         },
       ],
     });
+    // terrain relief first (fills the background), then the swarm glow additively on top
+    if (cfg.terrainEnabled) {
+      canvasPass.setPipeline(terrainPipeline);
+      canvasPass.setBindGroup(0, terrainGroup);
+      canvasPass.draw(3);
+    }
     canvasPass.setPipeline(blitPipeline);
     canvasPass.setBindGroup(0, blitGroup!);
     canvasPass.draw(3);
@@ -905,6 +1066,9 @@ export async function createBoidsEngine(
     reseed() {
       reseedNow();
     },
+    clearTerrain() {
+      device.queue.writeBuffer(deltaBuffer, 0, deltaZeros);
+    },
     dispose() {
       disposed = true;
       cancelAnimationFrame(raf);
@@ -919,6 +1083,9 @@ export async function createBoidsEngine(
       paramsBuffer.destroy();
       renderParamsBuffer.destroy();
       fadeBuffer.destroy();
+      terrainParamsBuffer.destroy();
+      deltaBuffer.destroy();
+      editParamsBuffer.destroy();
       triangleBuffer.destroy();
       paletteBuffer.destroy();
       countsBuffer.destroy();
