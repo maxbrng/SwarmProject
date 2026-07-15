@@ -276,9 +276,9 @@ export async function createBoidsEngine(
     size: 4 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-  // TerrainParams uniform: 24 floats / 96 bytes (aspect,time,scale,drift, line*, valley/mid/peak/snow vec4)
+  // TerrainParams uniform: 28 floats / 112 bytes (+, misc vec4 with sim-units-per-pixel)
   const terrainParamsBuffer = device.createBuffer({
-    size: 24 * 4,
+    size: 28 * 4,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   // Sculpted terrain delta: mutable f32 height field over screen uv (added on top of terrainH).
@@ -695,7 +695,7 @@ export async function createBoidsEngine(
 
   const params = new Float32Array(PARAMS_FLOATS);
   const renderParams = new Float32Array(8);
-  const terrainParams = new Float32Array(24);
+  const terrainParams = new Float32Array(28);
   const editParams = new Float32Array(12); // brush uniform for the sculpt pass
 
   // FPS averaging
@@ -868,6 +868,9 @@ export async function createBoidsEngine(
     terrainParams[21] = cfg.terrainSnow[1];
     terrainParams[22] = cfg.terrainSnow[2];
     terrainParams[23] = cfg.terrainSnowAmount; // snow.a = cap strength
+    // misc.x = sim units per pixel (sim y spans 2 over the full canvas height) → used for the
+    // derivative-free contour line width. Guard against a 0 height before the first resize.
+    terrainParams[24] = 2 / Math.max(1, canvas.height);
     device.queue.writeBuffer(terrainParamsBuffer, 0, terrainParams);
 
     // brush uniform for the sculpt pass (heal always runs; the brush adds only while held)

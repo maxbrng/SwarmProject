@@ -757,6 +757,7 @@ struct TerrainParams {
   mid    : vec4f, // rgb = mid-slope color; .a = terrainWarp
   peak   : vec4f, // rgb = peak color; .a = hill-shading strength
   snow   : vec4f, // rgb = snow/rock cap color; .a = snow-cap strength
+  misc   : vec4f, // .x = sim units per pixel (for derivative-free contour AA)
 };
 @group(0) @binding(0) var<uniform> T : TerrainParams;
 @group(0) @binding(1) var<storage, read> delta : array<f32>; // sculpted height delta
@@ -788,6 +789,13 @@ fn fs(in : VOut) -> @location(0) vec4f {
   // lowered). Left unbounded, the dome/bowl keeps its slope → contour lines + shading run right
   // over it. The color ramp + line brightness clamp internally, so oversaturation is graceful.
   let h = terrainH(sp, te, T.scale, cov, wp) + sampleDelta(in.uv);
+  // Analytic height gradient (NO screen-space derivatives): dpdx/dpdy/fwidth returned per-tile
+  // garbage on some Linux Vulkan / ANGLE drivers → rectangular block artifacts in the terrain.
+  // Sampling the full height (base + delta) at small offsets is fully driver-independent.
+  let ge = 0.014;
+  let hgx = (terrainH(sp + vec2f(ge, 0.0), te, T.scale, cov, wp) + sampleDelta(simToUv(sp + vec2f(ge, 0.0), T.aspect))) - h;
+  let hgy = (terrainH(sp + vec2f(0.0, ge), te, T.scale, cov, wp) + sampleDelta(simToUv(sp + vec2f(0.0, ge), T.aspect))) - h;
+  let gradSim = vec2f(hgx, hgy) / ge; // d(height)/d(sim units)
 
   // hypsometric elevation fill: valley → mid → peak, so the height reads by COLOR (not just the
   // lines). Two chained mixes (no branch): t1 drives the lower half, t2 the upper half.
@@ -799,22 +807,20 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let snow = smoothstep(0.6, 1.0, h);
   col = mix(col, T.snow.rgb, snow * T.snow.a);
 
-  // ── Hill-shading from the on-screen gradient of the FULL height ──
-  // dpdx/dpdy give the per-pixel change of h (base + sculpted delta) → correct 3D shading of both
-  // the natural relief and anything painted with the brush, at no extra height samples. Kept
-  // gentle: large normal-z + a narrow bright/shadow range → no harsh full-screen shadows.
-  let gx = dpdx(h) * 90.0; // 90 ≈ on-screen relief exaggeration
-  let gy = dpdy(h) * 90.0;
-  let n = normalize(vec3f(-gx, gy, 1.0));
+  // ── Hill-shading from the ANALYTIC gradient of the FULL height ──
+  // Surface normal from the sampled height gradient (base + sculpted delta), lit from the
+  // upper-left. Large normal-z + a narrow bright/shadow range → gentle relief, no harsh shadows.
+  let n = normalize(vec3f(-gradSim.x, -gradSim.y, 1.1)); // z = vertical exaggeration
   let lightDir = normalize(vec3f(-0.5, 0.7, 0.75));
   let dif = clamp(dot(n, lightDir), 0.0, 1.0);
   let shadeF = mix(1.0, 0.5 + 0.9 * dif, T.peak.a); // range 0.5..1.4
   col = col * shadeF;
 
-  // anti-aliased contour lines at each 1/lineCount height level. fwidth keeps the line a roughly
-  // constant thickness on screen, so steep ground (fast-changing h) simply packs more lines in.
+  // anti-aliased contour lines at each 1/lineCount height level. The per-pixel change of hf is
+  // computed ANALYTICALLY (no fwidth) so steep ground still packs more lines in, but nothing
+  // depends on driver derivatives: |d(hf)/dpixel| = lineCount·|gradSim|·(sim units per pixel).
   let hf = h * T.lineCount;
-  let w = fwidth(hf);
+  let w = T.lineCount * length(gradSim) * T.misc.x;
   let g = abs(fract(hf + 0.5) - 0.5);        // distance to nearest contour level (0..0.5)
   let aa = g / max(w, 1e-5);                  // in pixels from the line
   let line = 1.0 - smoothstep(0.0, T.lineWidth, aa);
