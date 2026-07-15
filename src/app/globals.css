@@ -263,6 +263,14 @@ body {
   width: 230px;
 }
 
+/* ── Terrain tuning panel (temporary, bottom-left) ────────────────────────── */
+.panel--terrain {
+  top: auto;
+  bottom: 16px;
+  left: 16px;
+  width: 240px;
+}
+
 .swirl__hint {
   margin: 8px 0 2px;
   font-size: 11px;

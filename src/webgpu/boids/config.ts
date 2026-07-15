@@ -30,6 +30,9 @@ export type DominanceMode = "cyclic" | "random" | "chaos";
  */
 export type BirthMode = "off" | "constant" | "adaptive" | "homeland";
 
+/** Terrain sculpt tool: off (touch = swirl), or raise/lower relief at the finger (touch = brush). */
+export type TerrainTool = "off" | "raise" | "lower";
+
 export interface BoidsConfig {
   /** Number of boids. O(n²) on the GPU — fine up to ~8000. */
   count: number;
@@ -80,6 +83,58 @@ export interface BoidsConfig {
   swirlRampUp: number;
   /** Seconds for the swirl to fade back out after the finger lifts (self-healing). */
   swirlRampDown: number;
+
+  // ── Stage 3: living terrain (relief) ────────────────────────────────────────
+  // A slowly drifting height field of mountains & valleys drawn as contour lines under the swarm.
+  // The boids are pushed downhill by its gradient → they flow through the valleys and cannot climb
+  // over the peaks (steep slopes act as a soft wall). Right now the relief is a pure analytic
+  // function of position + time (no buffer); gesture-sculpting later adds an editable delta on top.
+  // These values are meant to be dialed in via the temporary TerrainPanel, then baked as defaults.
+  /** Master switch for the terrain layer (render + boid avoidance). */
+  terrainEnabled: boolean;
+  /** How hard the downhill gradient pushes the boids. 0 = boids ignore the relief entirely. */
+  terrainForce: number;
+  /** Spatial frequency of the relief. Higher = more, smaller mountains; lower = broad ranges. */
+  terrainScale: number;
+  /** Valley↔mountain ratio (0..1). Low = almost all flat plateau with only a few isolated peaks;
+   *  high = more mountainous. Controls the height threshold above which ground becomes mountain. */
+  terrainCoverage: number;
+  /** Domain-warp strength (0 = grid-aligned base look; higher = ridges bend more organically). */
+  terrainWarp: number;
+  /** How fast the whole landscape slowly drifts/morphs over time (0 = frozen relief). */
+  terrainDrift: number;
+  /** Number of contour lines across the full height range. Higher = a denser topographic map. */
+  terrainLineCount: number;
+  /** On-screen thickness of the contour lines (in pixels, anti-aliased). */
+  terrainLineWidth: number;
+  /** Brightness of the contour lines over the background. */
+  terrainLineBright: number;
+  /** Overall strength/brightness of the elevation fill color (0 = black, just the lines). */
+  terrainTint: number;
+  /** Hill-shading strength: directional light from the height gradient that makes ridges bright
+   *  and shadowed slopes dark → the flat field reads as real 3D relief. 0 = flat (no shading). */
+  terrainShade: number;
+  /** Hypsometric elevation ramp (linear RGB, 0..1): valley floor → mid slopes → peaks. Kept
+   *  muted/dark enough that the additive swarm on top still pops, but clearly readable by color. */
+  terrainValley: RGB;
+  terrainMid: RGB;
+  terrainPeak: RGB;
+  /** Snow/rock cap color blended onto the highest ground (set amount to 0 to disable the cap). */
+  terrainSnow: RGB;
+  /** Strength of the snow/rock cap on peaks (0 = off → peaks stay the peak color). */
+  terrainSnowAmount: number;
+
+  // ── Stage 3.5: terrain sculpting (long-press brush → editable delta on top of the base) ────
+  /** Active sculpt tool. off = single-finger touch does the swirl; raise/lower = touch sculpts. */
+  terrainTool: TerrainTool;
+  /** Brush radius (share of screen height, aspect-corrected → round on screen). */
+  terrainBrushSize: number;
+  /** How fast the brush raises/lowers the ground per second of holding. */
+  terrainBrushStrength: number;
+  /** Jaggedness of sculpted relief: 0 = smooth hill/basin, 1 = very craggy, angular mountains. */
+  terrainBrushDetail: number;
+  /** How fast the sculpted relief relaxes back toward the base per second (0 = permanent). */
+  terrainHealRate: number;
 
   // ── Stage 2: species / predator-prey ───────────────────────────────────────
   /** Number of species/populations (1 … MAX_SPECIES; 1 = single flock, no predator-prey). */
@@ -161,6 +216,34 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   swirlDir: 1,
   swirlRampUp: 0.12,
   swirlRampDown: 0.5,
+
+  // terrain (tune live in the TerrainPanel, then bake here)
+  terrainEnabled: true,
+  terrainForce: 6,
+  terrainScale: 0.85, // lower = bigger mountains / broader valleys (numerically tuned)
+  terrainCoverage: 0.65, // mostly flat plateau + a few isolated, craggy tall peaks (tuned)
+  terrainWarp: 0, // 0 = current grid-aligned look (dial up for organic, non-grid ridges)
+  terrainDrift: 0.06,
+  terrainLineCount: 15,
+  terrainLineWidth: 1.0,
+  terrainLineBright: 0.5,
+  terrainTint: 1,
+  terrainShade: 0.8,
+  // earthy hypsometric ramp: dark blue-green basin → olive slopes → muted rock-brown peaks.
+  // Peaks are a medium earthy brown (NOT near-white) so mountain tops don't read as pale blobs;
+  // the hill-shading provides the light/dark, not a bright fill color.
+  terrainValley: [0.05, 0.09, 0.11],
+  terrainMid: [0.15, 0.19, 0.12],
+  terrainPeak: [0.44, 0.38, 0.28], // lighter rock so peaks read as high (snow cap added on top)
+  terrainSnow: [0.9, 0.92, 0.96], // snow/rock cap on the very highest ground
+  terrainSnowAmount: 0.85,
+
+  // terrain sculpting (brush)
+  terrainTool: "off",
+  terrainBrushSize: 0.22,
+  terrainBrushStrength: 0.8,
+  terrainBrushDetail: 0, // smooth rounded raise/lower by default; raise for craggy mountains
+  terrainHealRate: 0.02, // slow self-heal (relief relaxes over ~50 s)
 
   numSpecies: 3,
   chaseWeight: 1.2,

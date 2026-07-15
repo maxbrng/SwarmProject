@@ -24,7 +24,18 @@ interface Props {
 
 type NumericKey = Exclude<
   keyof BoidsConfig,
-  "background" | "deathMode" | "seedMode" | "birthMode" | "dominanceMode" | "speciesColors"
+  | "background"
+  | "deathMode"
+  | "seedMode"
+  | "birthMode"
+  | "dominanceMode"
+  | "speciesColors"
+  | "terrainEnabled"
+  | "terrainValley"
+  | "terrainMid"
+  | "terrainPeak"
+  | "terrainSnow"
+  | "terrainTool"
 >;
 
 // ── color helpers (linear rgb 0..1 ↔ #rrggbb) ──────────────────────────────────

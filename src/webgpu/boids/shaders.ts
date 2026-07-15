@@ -27,8 +27,110 @@ struct Params {
   adaptiveStrength : f32, cellSize : f32, gridX : f32, gridY : f32,
   declump : f32, swirlX : f32, swirlY : f32, swirlAmp : f32,
   swirlStrength : f32, swirlRadius : f32, swirlFalloff : f32, swirlInward : f32,
-  swirlDir : f32, _pg0 : f32, _pg1 : f32, _pg2 : f32,
+  swirlDir : f32, terrainForce : f32, terrainScale : f32, terrainDrift : f32,
+  terrainCoverage : f32, terrainWarp : f32, _pg2 : f32, _pg3 : f32,
 };
+`;
+
+// ── Shared terrain height field ───────────────────────────────────────────────
+// A smooth analytic landscape in ~[0,1]: sum of a few sine "ridges" at different frequencies that
+// slowly drift with time. The SAME function feeds the boid avoidance (downhill gradient) and the
+// contour rendering, so what you see is exactly what the swarm feels. `p` is in sim space
+// (x∈[-aspect,aspect], y∈[-1,1]); `t` is the already-scaled drift time; `s` the spatial frequency.
+// (Later, gesture-sculpted relief becomes an editable delta added on top of this base.)
+const TERRAIN_WGSL = /* wgsl */ `
+fn thash2(p : vec2f) -> f32 {
+  return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+}
+// smooth value noise (0..1) with cubic interpolation
+fn tvnoise(p : vec2f) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = thash2(i);
+  let b = thash2(i + vec2f(1.0, 0.0));
+  let c = thash2(i + vec2f(0.0, 1.0));
+  let d = thash2(i + vec2f(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+// standard fbm (0..1): rolling landscape, natural look
+fn tfbm(p : vec2f) -> f32 {
+  var v = 0.0;
+  var a = 0.5;
+  var f = 1.0;
+  for (var o = 0; o < 4; o = o + 1) {
+    v += a * tvnoise(p * f);
+    a *= 0.5;
+    f *= 2.0;
+  }
+  return v / 0.9375; // normalize (0.5+0.25+0.125+0.0625) → ~0..1
+}
+// cheap 2-octave field used only to warp the domain (optional, driven by the Warp slider)
+fn twarp(p : vec2f) -> f32 {
+  return tvnoise(p) * 0.65 + tvnoise(p * 2.1 + vec2f(4.0, 1.0)) * 0.35;
+}
+// Height field in [0,1]: mostly FLAT PLATEAU with only a FEW isolated tall mountains — the ratio
+// is set by cov (the terrainCoverage slider). A steep smoothstep above a coverage-driven
+// threshold makes the rare high spots rise fast to full-height peaks; below it the ground is a
+// nearly-flat plateau carrying only a faint texture (a couple of widely-spaced contour lines) so
+// it reads as low land, not a dead bleached blob. The plateau is one **connected** low region
+// (isolated mountains in a sea of flat) → the swarm roams everywhere; only the steep peaks block.
+// Numerically tuned + flood-fill verified (scratchpad/terr4.mjs). Same fn feeds boids + rendering.
+fn terrainH(p : vec2f, t : f32, s : f32, cov : f32, warp : f32) -> f32 {
+  var q = p * s + vec2f(t * 0.04, t * 0.02);
+  // Optional domain warp (Warp slider): bend the coordinates with another noise field so ridges
+  // meander organically instead of sitting on the grid. warp = 0 → byte-identical to the un-warped
+  // terrain; dial it up gently for a more natural look. Kept subtle by design.
+  if (warp > 0.001) {
+    let w = vec2f(twarp(q + vec2f(1.7, 9.2)), twarp(q + vec2f(8.3, 2.8)));
+    q = q + (w - vec2f(0.5)) * warp;
+  }
+  let base = tfbm(q);
+  let thr = mix(0.72, 0.46, clamp(cov, 0.0, 1.0)); // higher cov → lower threshold → more mountains
+  // mask = WHERE the mountains are (soft flanks); its width is the mountain-base slope the boids
+  // climb. It only places the mountains — it must NOT be the height itself, or the tops saturate
+  // flat (that was the "smooth flat surface" bug).
+  let mask = smoothstep(thr, thr + 0.12, base);
+  // relief = the mountain BODY, a craggy ridged surface that keeps varying inside the mountain so
+  // the tops are shaped (peaks, ridges, contour lines + shading over them), never a flat cap.
+  let r1 = 1.0 - abs(2.0 * tvnoise(q * 2.0 + vec2f(3.0, 3.0)) - 1.0);
+  let r2 = 1.0 - abs(2.0 * tvnoise(q * 4.3 + vec2f(9.0, 9.0)) - 1.0);
+  let crag = r1 * 0.6 + r2 * r2 * 0.4;
+  let relief = 0.45 + 0.55 * crag; // mountain body height 0.45..1.0, always varying
+  // Lowland/valley height: follow the base fbm (reuses it, free) so the WHOLE map has structure —
+  // rolling relief, contour lines and gentle basins in the valleys too, not just under the peaks.
+  // It stays low (≈0..0.3) → gentle slopes; the boid barrier is height-gated in the compute pass
+  // so this valley structure never blocks the swarm (only the tall mountains do).
+  let low = base * 0.40;
+  return clamp(low * (1.0 - mask) + mask * relief, 0.0, 1.0);
+}
+`;
+
+// ── Editable terrain delta (sculpting) ───────────────────────────────────────
+// A mutable height field the user paints with the long-press brush, added on top of the analytic
+// terrainH. Stored as a flat f32 buffer over screen-normalized uv (aspect-independent). The SAME
+// sampleDelta feeds the boid avoidance, the rendering and the edit pass, so sculpted relief is felt
+// and drawn identically. Resolution is fixed; bilinear sampling keeps it smooth.
+export const DELTA_W = 320;
+export const DELTA_H = 200;
+const DELTA_WGSL = /* wgsl */ `
+const DELTA_W : u32 = ${DELTA_W}u;
+const DELTA_H : u32 = ${DELTA_H}u;
+fn simToUv(p : vec2f, aspect : f32) -> vec2f {
+  return vec2f((p.x / aspect + 1.0) * 0.5, (1.0 - p.y) * 0.5);
+}
+fn sampleDelta(uv : vec2f) -> f32 {
+  let cu = clamp(uv.x, 0.0, 1.0) * f32(DELTA_W - 1u);
+  let cv = clamp(uv.y, 0.0, 1.0) * f32(DELTA_H - 1u);
+  let x0 = u32(floor(cu)); let y0 = u32(floor(cv));
+  let x1 = min(x0 + 1u, DELTA_W - 1u); let y1 = min(y0 + 1u, DELTA_H - 1u);
+  let tx = cu - f32(x0); let ty = cv - f32(y0);
+  let a = delta[y0 * DELTA_W + x0];
+  let b = delta[y0 * DELTA_W + x1];
+  let c = delta[y1 * DELTA_W + x0];
+  let d = delta[y1 * DELTA_W + x1];
+  return mix(mix(a, b, tx), mix(c, d, tx), ty);
+}
 `;
 
 // Which grid cell a position falls into (clamped to the grid).
@@ -44,6 +146,8 @@ fn cellOfPos(pos : vec2f, aspect : f32, cellSize : f32, gx : i32, gy : i32) -> u
 export const computeWGSL = /* wgsl */ `
 ${BOID_STRUCT}
 ${PARAMS_WGSL}
+${TERRAIN_WGSL}
+${DELTA_WGSL}
 struct PopCounts { a : vec4f, b : vec4f }; // alive boids per species: a=0..3, b=4..5
 struct DomMatrix { a : vec4f, b : vec4f }; // per-predator bitmask of prey: a=rows 0..3, b=rows 4..5
 
@@ -54,6 +158,7 @@ struct DomMatrix { a : vec4f, b : vec4f }; // per-predator bitmask of prey: a=ro
 @group(0) @binding(4) var<uniform> Dom : DomMatrix;
 @group(0) @binding(5) var<storage, read> cellStart : array<u32>; // prefix sums (len numCells+1)
 @group(0) @binding(6) var<storage, read> sortedIdx : array<u32>; // boid indices sorted by cell
+@group(0) @binding(7) var<storage, read> delta : array<f32>;     // sculpted height delta
 
 fn popCount(s : i32) -> f32 {
   if (s == 0) { return Pop.a.x; } if (s == 1) { return Pop.a.y; }
@@ -367,6 +472,45 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   if (pos.y < -1.0 + m)      { let dpt = ((-1.0 + m) - pos.y) / m;      edgeAcc.y += dpt * dpt; }
   vel += edgeAcc * (EDGE_PUSH * P.maxSpeed) * P.dt;
 
+  // ── Terrain avoidance: repel off the mountains like the screen edge does ─────
+  // The user's reference: the soft screen-edge repulsion feels natural (not a hard bounce, not
+  // leaky). So mountains use the SAME shape — a restoring push back down the slope whose strength
+  // grows CUBICALLY with height into the mountain: nearly nothing at the foot (smooth entry, no
+  // "water bouncing off glass"), a firm ceiling near the top (nothing flies over). A per-frame cap
+  // keeps even a high Barrier strength from snapping boids back violently, so there is a wide
+  // usable range instead of the old "too weak = fly over / too strong = bounce".
+  if (P.terrainForce > 0.0) {
+    let te = P.time * P.terrainDrift;
+    let e = 0.012; // sim-space sampling offset for the finite-difference gradient
+    let s = P.terrainScale;
+    let cov = P.terrainCoverage;
+    let wp = P.terrainWarp;
+    let asp = P.aspect;
+    // full height = analytic base + sculpted delta, so the swarm feels painted mountains/valleys too
+    let hR = terrainH(pos + vec2f(e, 0.0), te, s, cov, wp) + sampleDelta(simToUv(pos + vec2f(e, 0.0), asp));
+    let hL = terrainH(pos - vec2f(e, 0.0), te, s, cov, wp) + sampleDelta(simToUv(pos - vec2f(e, 0.0), asp));
+    let hU = terrainH(pos + vec2f(0.0, e), te, s, cov, wp) + sampleDelta(simToUv(pos + vec2f(0.0, e), asp));
+    let hD = terrainH(pos - vec2f(0.0, e), te, s, cov, wp) + sampleDelta(simToUv(pos - vec2f(0.0, e), asp));
+    let grad = vec2f(hR - hL, hU - hD) / (2.0 * e);
+    // Penetration into the mountain, exactly like the screen edge's margin: 0 at the foot of the
+    // slope, growing with height. A CUBIC ramp makes the push almost nothing at the foot (smooth,
+    // no bounce) and very firm near the top (a hard ceiling nothing crosses) — the same shape that
+    // makes the screen-edge repulsion feel natural yet solid. Capped so a sculpted cliff can't fling.
+    let hHere = terrainH(pos, te, s, cov, wp) + sampleDelta(simToUv(pos, asp));
+    let dpt = (hHere - 0.25) / 0.35; // 0 at the slope foot, ~1 mid-slope, >1 near the peak
+    let gl = length(grad);
+    if (dpt > 0.0 && gl > 1e-4) {
+      let downhill = -grad / gl;                 // restoring direction: back down the slope
+      // Quadratic in penetration, EXACTLY like EDGE_PUSH·dpt², and NOT capped per-second (that was
+      // the bug: after ·dt the push became ~0.01·maxSpeed/frame — far too weak to stop a boid before
+      // the peak, so they flew over). The cap is on the per-FRAME change instead, so a natural
+      // mountain gets its full (blocking) force while only an extreme sculpted cliff is bounded.
+      var dvf = downhill * (P.terrainForce * P.maxSpeed * dpt * dpt) * P.dt;
+      dvf = limit(dvf, P.maxSpeed * 0.5);        // ≤ half maxSpeed per frame → firm, never explosive
+      vel += dvf;
+    }
+  }
+
   vel = limit(vel, P.maxSpeed);
   let spd = length(vel);
   let minSp = P.maxSpeed * 0.5;
@@ -595,6 +739,148 @@ fn vs(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
 @fragment
 fn fs() -> @location(0) vec4f {
   return vec4f(F.r, F.g, F.b, F.fade);
+}
+`;
+
+// ── Terrain: contour-line relief drawn under the swarm (fullscreen) ───────────
+// Same height field the boids feel. Renders as a subtle topographic map: a dark valley→peak
+// tint plus anti-aliased contour lines. The lines bunch up automatically where the ground is
+// steep (equal-height spacing over a short screen distance) → mountains read clearly, valleys
+// stay open, and it all stays dark so the additive swarm on top remains the star.
+export const terrainWGSL = /* wgsl */ `
+${TERRAIN_WGSL}
+${DELTA_WGSL}
+struct TerrainParams {
+  aspect : f32, time : f32, scale : f32, drift : f32,
+  lineCount : f32, lineWidth : f32, lineBright : f32, tint : f32,
+  valley : vec4f, // rgb = valley-floor color; .a = terrainCoverage
+  mid    : vec4f, // rgb = mid-slope color; .a = terrainWarp
+  peak   : vec4f, // rgb = peak color; .a = hill-shading strength
+  snow   : vec4f, // rgb = snow/rock cap color; .a = snow-cap strength
+};
+@group(0) @binding(0) var<uniform> T : TerrainParams;
+@group(0) @binding(1) var<storage, read> delta : array<f32>; // sculpted height delta
+
+struct VOut {
+  @builtin(position) clip : vec4f,
+  @location(0)       uv   : vec2f,
+};
+
+@vertex
+fn vs(@builtin(vertex_index) vi : u32) -> VOut {
+  var p = array<vec2f, 3>(vec2f(-1.0, -1.0), vec2f(3.0, -1.0), vec2f(-1.0, 3.0));
+  let pos = p[vi];
+  var out : VOut;
+  out.clip = vec4f(pos, 0.0, 1.0);
+  out.uv   = vec2f((pos.x + 1.0) * 0.5, (1.0 - pos.y) * 0.5);
+  return out;
+}
+
+@fragment
+fn fs(in : VOut) -> @location(0) vec4f {
+  // pixel → sim space (y up), matching the boid coordinates
+  let sp = vec2f((in.uv.x * 2.0 - 1.0) * T.aspect, 1.0 - in.uv.y * 2.0);
+  let te = T.time * T.drift;
+  let cov = T.valley.a; // terrainCoverage packed into the unused valley alpha
+  let wp = T.mid.a;     // terrainWarp packed into the unused mid alpha
+  // full height = analytic base + sculpted delta (what the swarm feels too). NOT clamped to [0,1]:
+  // clamping flattened sculpted peaks/pits into structureless caps (white when raised, blue when
+  // lowered). Left unbounded, the dome/bowl keeps its slope → contour lines + shading run right
+  // over it. The color ramp + line brightness clamp internally, so oversaturation is graceful.
+  let h = terrainH(sp, te, T.scale, cov, wp) + sampleDelta(in.uv);
+
+  // hypsometric elevation fill: valley → mid → peak, so the height reads by COLOR (not just the
+  // lines). Two chained mixes (no branch): t1 drives the lower half, t2 the upper half.
+  let t1 = clamp(h * 2.0, 0.0, 1.0);
+  let t2 = clamp(h * 2.0 - 1.0, 0.0, 1.0);
+  var col = mix(mix(T.valley.rgb, T.mid.rgb, t1), T.peak.rgb, t2) * T.tint;
+  // Bright snow/rock cap on the highest ground → tall peaks read as light & high (natural peaks get
+  // a touch, hand-sculpted tall ones get a full cap). Applied before shading so it still gets lit.
+  let snow = smoothstep(0.6, 1.0, h);
+  col = mix(col, T.snow.rgb, snow * T.snow.a);
+
+  // ── Hill-shading from the on-screen gradient of the FULL height ──
+  // dpdx/dpdy give the per-pixel change of h (base + sculpted delta) → correct 3D shading of both
+  // the natural relief and anything painted with the brush, at no extra height samples. Kept
+  // gentle: large normal-z + a narrow bright/shadow range → no harsh full-screen shadows.
+  let gx = dpdx(h) * 90.0; // 90 ≈ on-screen relief exaggeration
+  let gy = dpdy(h) * 90.0;
+  let n = normalize(vec3f(-gx, gy, 1.0));
+  let lightDir = normalize(vec3f(-0.5, 0.7, 0.75));
+  let dif = clamp(dot(n, lightDir), 0.0, 1.0);
+  let shadeF = mix(1.0, 0.5 + 0.9 * dif, T.peak.a); // range 0.5..1.4
+  col = col * shadeF;
+
+  // anti-aliased contour lines at each 1/lineCount height level. fwidth keeps the line a roughly
+  // constant thickness on screen, so steep ground (fast-changing h) simply packs more lines in.
+  let hf = h * T.lineCount;
+  let w = fwidth(hf);
+  let g = abs(fract(hf + 0.5) - 0.5);        // distance to nearest contour level (0..0.5)
+  let aa = g / max(w, 1e-5);                  // in pixels from the line
+  let line = 1.0 - smoothstep(0.0, T.lineWidth, aa);
+  // Fade the lines out where they would pack tighter than a pixel (very steep sculpted walls):
+  // otherwise dozens of contours merge into one solid near-white fill (the "white blob"). Fading
+  // them keeps the shaded slope readable instead.
+  let lineFade = 1.0 - smoothstep(0.5, 1.2, w);
+  // neutral warm-gray ink lines over the shaded relief; a touch brighter toward the peaks
+  let lineCol = vec3f(0.72, 0.74, 0.68) * (0.55 + 0.6 * clamp(h, 0.0, 1.0));
+  col += lineCol * (line * T.lineBright * lineFade);
+
+  return vec4f(col, 1.0);
+}
+`;
+
+// ── Terrain edit: the long-press brush paints the delta buffer + slow self-heal ──
+// Runs each frame before the sim. Each thread owns one delta cell: it relaxes the cell toward 0
+// (self-healing relief) and, while a brush is active, raises/lowers it with a smooth falloff. A
+// detail term modulates the brush with craggy noise so high "detail" sculpts jagged mountains.
+export const terrainEditWGSL = /* wgsl */ `
+${TERRAIN_WGSL}
+${DELTA_WGSL}
+struct Brush {
+  u : f32, v : f32, radius : f32, strength : f32,
+  detail : f32, heal : f32, brushOn : f32, dt : f32,
+  aspect : f32, time : f32, _p0 : f32, _p1 : f32,
+};
+@group(0) @binding(0) var<uniform> B : Brush;
+@group(0) @binding(1) var<storage, read_write> delta : array<f32>;
+
+@compute @workgroup_size(64)
+fn main(@builtin(global_invocation_id) gid : vec3u) {
+  let i = gid.x;
+  if (i >= DELTA_W * DELTA_H) { return; }
+  let x = i % DELTA_W;
+  let y = i / DELTA_W;
+  let uv = vec2f((f32(x) + 0.5) / f32(DELTA_W), (f32(y) + 0.5) / f32(DELTA_H));
+
+  var d = delta[i];
+  d *= (1.0 - clamp(B.heal * B.dt, 0.0, 1.0)); // slow relax toward the base relief
+
+  if (B.brushOn > 0.5) {
+    let du = (uv.x - B.u) * B.aspect; // aspect-correct → the brush is round on screen
+    let dv = uv.y - B.v;
+    let r = sqrt(du * du + dv * dv) / max(B.radius, 1e-4);
+    if (r < 1.0) {
+      // Parabolic dome (like the classic Sims pond/hill tool): highest in the middle, and the slope
+      // GROWS toward the rim (d/dr(1-r²) = -2r → linear in r) → a clean, rounded raise/lower.
+      var amt = 1.0 - r * r;
+      if (B.detail > 0.0) {
+        // craggy modulation for jagged mountains — floored at 0.45 so it roughens the dome without
+        // punching holes in it (keeps the overall rounded shape).
+        let n1 = tvnoise(uv * 26.0 + vec2f(3.0, 7.0));
+        let n2 = 1.0 - abs(2.0 * tvnoise(uv * 47.0 + vec2f(11.0, 5.0)) - 1.0);
+        let rough = 0.45 + 0.55 * clamp(n1 * 0.5 + n2 * n2, 0.0, 1.0);
+        amt *= mix(1.0, rough, clamp(B.detail, 0.0, 1.0));
+      }
+      // Asymptotic approach to the ±cap: as the cell nears its limit the brush adds less, so heavy
+      // painting eases in smoothly instead of slamming into a hard flat plateau (dead cap).
+      var factor = 1.0;
+      if (B.strength > 0.0) { factor = clamp(1.0 - d / 0.95, 0.0, 1.0); }
+      else { factor = clamp(1.0 + d / 0.75, 0.0, 1.0); }
+      d += B.strength * amt * B.dt * factor;
+    }
+  }
+  delta[i] = clamp(d, -0.7, 0.9);
 }
 `;
 

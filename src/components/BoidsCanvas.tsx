@@ -6,6 +6,7 @@ import { DEFAULT_CONFIG, type BoidsConfig, type RGB } from "@/webgpu/boids/confi
 import ControlPanel from "./ControlPanel";
 import PopulationMonitor from "./PopulationMonitor";
 import SwirlPanel from "./SwirlPanel";
+import TerrainPanel from "./TerrainPanel";
 
 export default function BoidsCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -79,6 +80,10 @@ export default function BoidsCanvas() {
     handleRef.current?.reseed();
   }, []);
 
+  const onClearTerrain = useCallback(() => {
+    handleRef.current?.clearTerrain();
+  }, []);
+
   return (
     <>
       <canvas ref={canvasRef} className="swarm-canvas" />
@@ -94,6 +99,7 @@ export default function BoidsCanvas() {
           <ControlPanel onChange={onChange} onReseed={onReseed} fps={fps} />
           <PopulationMonitor counts={counts} numSpecies={numSpecies} colors={colors} />
           <SwirlPanel onChange={onChange} dir={swirlDir} />
+          <TerrainPanel onChange={onChange} onClearTerrain={onClearTerrain} />
         </>
       )}
     </>
