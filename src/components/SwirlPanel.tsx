@@ -1,12 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BoidsConfig, DEFAULT_CONFIG } from "@/webgpu/boids/config";
 
 interface Props {
   onChange: (partial: Partial<BoidsConfig>) => void;
   /** Current rotation direction (±1). Controlled by the parent so the stir gesture keeps it synced. */
   dir: number;
+  /** Bumped when a preset is loaded → re-sync the sliders to the loaded config. */
+  sync?: { nonce: number; cfg: Partial<BoidsConfig> } | null;
+  /** Accordion state — controlled by the parent so only one settings section is open at a time. */
+  open: boolean;
+  onToggle: () => void;
 }
 
 // Only the swirl-related, numeric config keys.
@@ -96,13 +101,29 @@ const SWIRL_SLIDERS: SwirlSlider[] = [
  * Temporary tuning panel for the touch swirl (Stage 1.5). Lets us dial in the vortex feel live;
  * once the final values are found they get baked into DEFAULT_CONFIG and this panel is removed.
  */
-export default function SwirlPanel({ onChange, dir }: Props) {
+export default function SwirlPanel({ onChange, dir, sync, open, onToggle }: Props) {
   const [values, setValues] = useState<Record<SwirlKey, number>>(() => {
     const v = {} as Record<SwirlKey, number>;
     for (const s of SWIRL_SLIDERS) v[s.key] = DEFAULT_CONFIG[s.key];
     return v;
   });
-  const [open, setOpen] = useState(true);
+
+  // A preset was loaded → mirror its swirl values into the sliders (the sim is already updated by
+  // the parent's onChange; the direction syncs via the controlled `dir` prop).
+  useEffect(() => {
+    const cfg = sync?.cfg;
+    if (!cfg) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: mirror the loaded preset into local UI state
+    setValues((prev) => {
+      const next = { ...prev };
+      for (const s of SWIRL_SLIDERS) {
+        const v = cfg[s.key];
+        if (typeof v === "number") next[s.key] = v;
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync?.nonce]);
 
   function set(key: SwirlKey, value: number) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -128,8 +149,8 @@ export default function SwirlPanel({ onChange, dir }: Props) {
   return (
     <div className={`panel panel--swirl ${open ? "" : "panel--closed"}`}>
       <div className="panel__head">
-        <button className="panel__toggle" onClick={() => setOpen((o) => !o)}>
-          {open ? "▾" : "▸"} Swirl · tuning
+        <button className="panel__toggle" onClick={onToggle}>
+          {open ? "▾" : "▸"} Swirl
         </button>
       </div>
 

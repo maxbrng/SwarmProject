@@ -1,12 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BoidsConfig, DEFAULT_CONFIG, RGB, TerrainTool } from "@/webgpu/boids/config";
 import ColorSwatch from "./ColorSwatch";
 
 interface Props {
   onChange: (partial: Partial<BoidsConfig>) => void;
   onClearTerrain: () => void;
+  /** Bumped when a preset is loaded → re-sync the sliders/colors to the loaded config. */
+  sync?: { nonce: number; cfg: Partial<BoidsConfig> } | null;
+  /** Accordion state — controlled by the parent so only one settings section is open at a time. */
+  open: boolean;
+  onToggle: () => void;
 }
 
 // Only the terrain-related, numeric config keys.
@@ -212,7 +217,7 @@ function hexToRgb(hex: string): RGB {
  * barrier strength, mountain size/drift, and the contour look — then bake the values into
  * DEFAULT_CONFIG and remove this panel.
  */
-export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
+export default function TerrainPanel({ onChange, onClearTerrain, sync, open, onToggle }: Props) {
   const [values, setValues] = useState<Record<TerrainKey, number>>(() => {
     const v = {} as Record<TerrainKey, number>;
     for (const s of ALL_SLIDERS) v[s.key] = DEFAULT_CONFIG[s.key];
@@ -224,7 +229,30 @@ export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
   const [mid, setMid] = useState<RGB>([...DEFAULT_CONFIG.terrainMid] as RGB);
   const [peak, setPeak] = useState<RGB>([...DEFAULT_CONFIG.terrainPeak] as RGB);
   const [snow, setSnow] = useState<RGB>([...DEFAULT_CONFIG.terrainSnow] as RGB);
-  const [open, setOpen] = useState(true);
+
+  // A preset was loaded → mirror its terrain values into this panel's sliders/colors (the sim itself
+  // is already updated by the parent's onChange). Guarded on the nonce so it only runs on load.
+  useEffect(() => {
+    const cfg = sync?.cfg;
+    if (!cfg) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- intentional: mirror the loaded preset into local UI state */
+    setValues((prev) => {
+      const next = { ...prev };
+      for (const s of ALL_SLIDERS) {
+        const v = cfg[s.key];
+        if (typeof v === "number") next[s.key] = v;
+      }
+      return next;
+    });
+    if (typeof cfg.terrainEnabled === "boolean") setEnabled(cfg.terrainEnabled);
+    if (cfg.terrainTool) setToolState(cfg.terrainTool);
+    if (cfg.terrainValley) setValley([...cfg.terrainValley] as RGB);
+    if (cfg.terrainMid) setMid([...cfg.terrainMid] as RGB);
+    if (cfg.terrainPeak) setPeak([...cfg.terrainPeak] as RGB);
+    if (cfg.terrainSnow) setSnow([...cfg.terrainSnow] as RGB);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync?.nonce]);
 
   function setTool(t: TerrainTool) {
     setToolState(t);
@@ -293,8 +321,8 @@ export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
   return (
     <div className={`panel panel--terrain ${open ? "" : "panel--closed"}`}>
       <div className="panel__head">
-        <button className="panel__toggle" onClick={() => setOpen((o) => !o)}>
-          {open ? "▾" : "▸"} Terrain · tuning
+        <button className="panel__toggle" onClick={onToggle}>
+          {open ? "▾" : "▸"} Terrain
         </button>
       </div>
 

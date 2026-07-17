@@ -237,6 +237,138 @@ body {
 }
 
 /* ── Control panel ────────────────────────────────────────────────────────── */
+/* ── Settings stack: Swarm / Terrain / Swirl as one accordion column (top-left) ─
+   One container, three panels stacked; only one is expanded at a time (controlled from
+   BoidsCanvas). The container is the single scroller and is height-capped to the viewport (dvh
+   excludes the iOS URL bar) → every section header stays reachable on a touch screen. Populations
+   is NOT in here — it stays pinned separately at the top-right. */
+.settings {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  width: 264px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(10, 14, 24, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(120, 160, 230, 0.18);
+  color: #dce6fb;
+  font-size: 12px;
+  user-select: none;
+  scrollbar-width: thin;
+}
+/* fully collapsed → shrink the card to just the one-line header */
+.settings--closed {
+  width: auto;
+}
+/* master line (top of the block): the collapse toggle + always-on controls (guide / FPS / restart),
+   separated from the content by a divider so it reads as the block's title bar. */
+.settings__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(120, 160, 230, 0.18);
+}
+.settings--closed .settings__head {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.settings__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: #8fa5cc; /* muted small-caps label → the least prominent of the three heading levels */
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.settings__toggle:hover {
+  color: #cdd9f2;
+}
+.settings__arrow {
+  color: #6f86b5;
+  font-size: 11px;
+}
+.settings__body {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+}
+/* Heading hierarchy so the levels are unmistakable:
+   MASTER (.settings__toggle) = small muted caps · SECTION (Swarm/Terrain/Swirl) = large & bright ·
+   sub-section (.section__head) = small muted caps (unchanged). */
+.settings .panel__toggle {
+  font-size: 14px;
+  font-weight: 700;
+  color: #eaf1ff;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 4px 0;
+}
+/* The three inner panels are plain sections inside the one card — strip their standalone card
+   chrome (own background / border / blur / padding) so it reads as a single block, not three boxes. */
+.settings .panel {
+  position: static;
+  inset: auto;
+  width: 100%;
+  max-height: none;
+  overflow: visible;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.settings .panel + .panel {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(120, 160, 230, 0.14);
+}
+/* Overarching footer (presets / save / reset), set off from the sections by a stronger divider. */
+.settings__footer {
+  display: flex;
+  flex-direction: column;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(120, 160, 230, 0.22);
+}
+/* Bigger, comfier tap targets on touch screens (the exhibition panel) — no effect with a mouse. */
+@media (pointer: coarse) {
+  .panel__toggle,
+  .section__head,
+  .panel__mode,
+  .swirl__dir,
+  .swirl__dirIcon,
+  .panel__reset,
+  .panel__save,
+  .panel__restart,
+  .panel__info,
+  .presets__load,
+  .presets__btn {
+    min-height: 36px;
+  }
+  .ctrl__slider {
+    height: 28px;
+  }
+  .settings,
+  .popmon {
+    font-size: 13px;
+  }
+}
+
 .panel {
   position: fixed;
   top: 16px;

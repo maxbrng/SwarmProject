@@ -38,6 +38,8 @@ export interface BoidsHandle {
   reseed: () => void;
   /** Erase all sculpted terrain (reset the delta buffer to 0). */
   clearTerrain: () => void;
+  /** Snapshot of the full live config (all fields, incl. swirl + terrain) — for presets / defaults. */
+  getConfig: () => BoidsConfig;
 }
 
 export interface EngineOptions {
@@ -57,7 +59,11 @@ export interface EngineOptions {
 const TRAIL_FORMAT: GPUTextureFormat = "rgba8unorm";
 const PARAMS_FLOATS = 40; // compute uniform (160 bytes; 33..36 = terrain force/scale/drift/coverage)
 const FLOATS_PER_BOID = 8; // pos.xy, vel.xy, species, energy, age, flash
+// Cap the render resolution. Touch devices (the iPad) get a lower cap: a Retina panel at dpr 2
+// renders ~4× the pixels, and the terrain fragment (multi-octave fbm + gradient samples per pixel)
+// is fill-rate bound → capping dpr there is the single biggest FPS win, for a small sharpness cost.
 const MAX_DPR = 2;
+const MAX_DPR_TOUCH = 1.5;
 // Stir gesture: rotating the finger sets the swirl direction. We accumulate the per-frame turn
 // (sin of the angle between consecutive move vectors, speed-independent) and flip when a clear
 // rotation is reached. Straight drags have ~0 turn → they only move the vortex, never flip it.
@@ -595,7 +601,8 @@ export async function createBoidsEngine(
   let aspect = 1;
 
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+    const cap = window.matchMedia?.("(pointer: coarse)").matches ? MAX_DPR_TOUCH : MAX_DPR;
+    const dpr = Math.min(window.devicePixelRatio || 1, cap);
     const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
     const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
     if (canvas.width === w && canvas.height === h && trailTexture) return;
@@ -1120,6 +1127,9 @@ export async function createBoidsEngine(
     },
     clearTerrain() {
       device.queue.writeBuffer(deltaBuffer, 0, deltaZeros);
+    },
+    getConfig() {
+      return structuredClone(cfg);
     },
     dispose() {
       disposed = true;
