@@ -112,6 +112,26 @@ export default function HelpModal({ onClose }: { onClose: () => void }) {
             </li>
           </ul>
 
+          <h4>Touch &amp; gestures</h4>
+          <p>Everything is controlled by touch — no buttons needed:</p>
+          <ul>
+            <li>
+              <b>One finger</b> — a swirl vortex that drags the swarm along. Circle your finger to
+              set the spin direction. Lift off and the swarm heals back on its own.
+            </li>
+            <li>
+              <b>Two fingers</b> — raise the ground into mountains under your fingers.
+            </li>
+            <li>
+              <b>Three fingers</b> — carve the ground down into valleys.
+            </li>
+            <li>
+              <b>Spread or pinch</b> your fingers to size the area you shape — wide hand = a broad
+              range, fingers together = a small hill or basin. The relief slowly heals back to the
+              natural landscape.
+            </li>
+          </ul>
+
           <h4>Start layout &amp; controls</h4>
           <ul>
             <li>

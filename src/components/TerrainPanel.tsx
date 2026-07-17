@@ -1,12 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BoidsConfig, DEFAULT_CONFIG, RGB, TerrainTool } from "@/webgpu/boids/config";
 import ColorSwatch from "./ColorSwatch";
 
 interface Props {
   onChange: (partial: Partial<BoidsConfig>) => void;
   onClearTerrain: () => void;
+  /** Bumped when a preset is loaded → re-sync the sliders/colors to the loaded config. */
+  sync?: { nonce: number; cfg: Partial<BoidsConfig> } | null;
+  /** Accordion state — controlled by the parent so only one settings section is open at a time. */
+  open: boolean;
+  onToggle: () => void;
 }
 
 // Only the terrain-related, numeric config keys.
@@ -159,7 +164,8 @@ const BRUSH_SLIDERS: TerrainSlider[] = [
     min: 0.05,
     max: 0.6,
     step: 0.01,
-    title: "Radius of the sculpt brush (share of screen height).",
+    title:
+      "Radius of the single-finger button brush (share of screen height). Multi-finger gestures ignore this and use your finger spread instead.",
     display: (v) => `${Math.round(v * 100)}%`,
   },
   {
@@ -211,7 +217,7 @@ function hexToRgb(hex: string): RGB {
  * barrier strength, mountain size/drift, and the contour look — then bake the values into
  * DEFAULT_CONFIG and remove this panel.
  */
-export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
+export default function TerrainPanel({ onChange, onClearTerrain, sync, open, onToggle }: Props) {
   const [values, setValues] = useState<Record<TerrainKey, number>>(() => {
     const v = {} as Record<TerrainKey, number>;
     for (const s of ALL_SLIDERS) v[s.key] = DEFAULT_CONFIG[s.key];
@@ -223,7 +229,30 @@ export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
   const [mid, setMid] = useState<RGB>([...DEFAULT_CONFIG.terrainMid] as RGB);
   const [peak, setPeak] = useState<RGB>([...DEFAULT_CONFIG.terrainPeak] as RGB);
   const [snow, setSnow] = useState<RGB>([...DEFAULT_CONFIG.terrainSnow] as RGB);
-  const [open, setOpen] = useState(true);
+
+  // A preset was loaded → mirror its terrain values into this panel's sliders/colors (the sim itself
+  // is already updated by the parent's onChange). Guarded on the nonce so it only runs on load.
+  useEffect(() => {
+    const cfg = sync?.cfg;
+    if (!cfg) return;
+    /* eslint-disable react-hooks/set-state-in-effect -- intentional: mirror the loaded preset into local UI state */
+    setValues((prev) => {
+      const next = { ...prev };
+      for (const s of ALL_SLIDERS) {
+        const v = cfg[s.key];
+        if (typeof v === "number") next[s.key] = v;
+      }
+      return next;
+    });
+    if (typeof cfg.terrainEnabled === "boolean") setEnabled(cfg.terrainEnabled);
+    if (cfg.terrainTool) setToolState(cfg.terrainTool);
+    if (cfg.terrainValley) setValley([...cfg.terrainValley] as RGB);
+    if (cfg.terrainMid) setMid([...cfg.terrainMid] as RGB);
+    if (cfg.terrainPeak) setPeak([...cfg.terrainPeak] as RGB);
+    if (cfg.terrainSnow) setSnow([...cfg.terrainSnow] as RGB);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sync?.nonce]);
 
   function setTool(t: TerrainTool) {
     setToolState(t);
@@ -292,8 +321,8 @@ export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
   return (
     <div className={`panel panel--terrain ${open ? "" : "panel--closed"}`}>
       <div className="panel__head">
-        <button className="panel__toggle" onClick={() => setOpen((o) => !o)}>
-          {open ? "▾" : "▸"} Terrain · tuning
+        <button className="panel__toggle" onClick={onToggle}>
+          {open ? "▾" : "▸"} Terrain
         </button>
       </div>
 
@@ -314,9 +343,13 @@ export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
             Terrain: {enabled ? "on" : "off"}
           </button>
 
-          {/* Sculpt tool: long-press on the map to raise/lower terrain (mode-dependent). */}
+          {/* Sculpt: gesture-driven multi-touch. 2 fingers raise, 3 lower; spread = radius. */}
           <div className="ctrl__label" style={{ marginTop: 6 }}>
-            Sculpt · long-press to build
+            Sculpt · touch gestures
+          </div>
+          <div className="swirl__hint">
+            <b>2 fingers</b> = raise mountains · <b>3 fingers</b> = carve valleys. Spread your fingers
+            wider for a bigger area, pinch for a small one. (1 finger = swirl.)
           </div>
           <div className="panel__modes3">
             {TERRAIN_TOOLS.map((tm) => (
@@ -330,15 +363,13 @@ export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
               </button>
             ))}
           </div>
-          {tool !== "off" && (
-            <div className="swirl__hint">
-              Touch &amp; <b>hold</b> on the map to {tool === "raise" ? "raise mountains" : "carve valleys"};
-              hold longer for more. Drag to sculpt a range. (One finger; ≥2 do nothing.)
-            </div>
-          )}
+          <div className="swirl__hint">
+            Optional override for testing: pick <b>Raise</b>/<b>Lower</b> to sculpt with a single
+            finger too; <b>Off</b> = one finger does the swirl. The multi-finger gestures work either way.
+          </div>
           <div className="section__body">
-            {tool !== "off" && BRUSH_SLIDERS.map(renderSlider)}
-            {tool !== "off" && (
+            {enabled && BRUSH_SLIDERS.map(renderSlider)}
+            {enabled && (
               <button className="panel__reset" onClick={onClearTerrain}>
                 Clear sculpted terrain
               </button>

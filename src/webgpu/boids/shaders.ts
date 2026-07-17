@@ -141,6 +141,34 @@ fn sampleDelta(uv : vec2f) -> f32 {
 }
 `;
 
+// Fragment-stage variant of the delta sampler backed by a TEXTURE instead of a storage buffer.
+// Apple's WebGPU (Metal) reports maxStorageBuffersInFragmentStage = 0 → a storage buffer read in a
+// fragment shader makes the render pipeline invalid → silent black screen on iPad/iOS. Textures in
+// the fragment stage are fine, so the render side samples the same delta field from an r32float
+// texture (the engine copies the delta buffer → texture each frame). Same bilinear math as above,
+// via textureLoad (r32float is unfilterable → no sampler, manual bilinear). Compute stages keep the
+// storage buffer (compute storage buffers are supported everywhere).
+const DELTA_TEX_WGSL = /* wgsl */ `
+const DELTA_W : u32 = ${DELTA_W}u;
+const DELTA_H : u32 = ${DELTA_H}u;
+fn simToUv(p : vec2f, aspect : f32) -> vec2f {
+  return vec2f((p.x / aspect + 1.0) * 0.5, (1.0 - p.y) * 0.5);
+}
+@group(0) @binding(1) var deltaTex : texture_2d<f32>;
+fn sampleDelta(uv : vec2f) -> f32 {
+  let cu = clamp(uv.x, 0.0, 1.0) * f32(DELTA_W - 1u);
+  let cv = clamp(uv.y, 0.0, 1.0) * f32(DELTA_H - 1u);
+  let x0 = u32(floor(cu)); let y0 = u32(floor(cv));
+  let x1 = min(x0 + 1u, DELTA_W - 1u); let y1 = min(y0 + 1u, DELTA_H - 1u);
+  let tx = cu - f32(x0); let ty = cv - f32(y0);
+  let a = textureLoad(deltaTex, vec2u(x0, y0), 0).r;
+  let b = textureLoad(deltaTex, vec2u(x1, y0), 0).r;
+  let c = textureLoad(deltaTex, vec2u(x0, y1), 0).r;
+  let d = textureLoad(deltaTex, vec2u(x1, y1), 0).r;
+  return mix(mix(a, b, tx), mix(c, d, tx), ty);
+}
+`;
+
 // Which grid cell a position falls into (clamped to the grid).
 const CELL_WGSL = /* wgsl */ `
 fn cellOfPos(pos : vec2f, aspect : f32, cellSize : f32, gx : i32, gy : i32) -> u32 {
@@ -757,7 +785,7 @@ fn fs() -> @location(0) vec4f {
 // stay open, and it all stays dark so the additive swarm on top remains the star.
 export const terrainWGSL = /* wgsl */ `
 ${TERRAIN_WGSL}
-${DELTA_WGSL}
+${DELTA_TEX_WGSL}
 struct TerrainParams {
   aspect : f32, time : f32, scale : f32, drift : f32,
   lineCount : f32, lineWidth : f32, lineBright : f32, tint : f32,
@@ -768,7 +796,8 @@ struct TerrainParams {
   misc   : vec4f, // .x = sim units per pixel (for derivative-free contour AA)
 };
 @group(0) @binding(0) var<uniform> T : TerrainParams;
-@group(0) @binding(1) var<storage, read> delta : array<f32>; // sculpted height delta
+// binding(1) = deltaTex, declared in DELTA_TEX_WGSL (texture, not a fragment storage buffer —
+// Apple/iOS forbids fragment-stage storage buffers).
 
 struct VOut {
   @builtin(position) clip : vec4f,

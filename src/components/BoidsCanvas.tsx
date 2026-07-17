@@ -7,6 +7,10 @@ import ControlPanel from "./ControlPanel";
 import PopulationMonitor from "./PopulationMonitor";
 import SwirlPanel from "./SwirlPanel";
 import TerrainPanel from "./TerrainPanel";
+import SettingsFooter from "./SettingsFooter";
+import HelpModal from "./HelpModal";
+
+type PanelId = "swarm" | "terrain" | "swirl";
 
 export default function BoidsCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -18,6 +22,21 @@ export default function BoidsCanvas() {
   const [numSpecies, setNumSpecies] = useState(DEFAULT_CONFIG.numSpecies);
   const [colors, setColors] = useState<RGB[]>(DEFAULT_CONFIG.speciesColors);
   const [swirlDir, setSwirlDir] = useState(DEFAULT_CONFIG.swirlDir >= 0 ? 1 : -1);
+  // Accordion: which settings section (Swarm / Terrain / Swirl) is expanded — at most one at a time.
+  // Open Swarm by default on desktop; start fully collapsed on narrow / touch screens (iPad).
+  const [openPanel, setOpenPanel] = useState<PanelId | null>(() =>
+    typeof window === "undefined" ? "swarm" : window.innerWidth > 900 ? "swarm" : null,
+  );
+  const togglePanel = useCallback(
+    (p: PanelId) => setOpenPanel((cur) => (cur === p ? null : p)),
+    [],
+  );
+  // Master collapse for the whole settings block → one line when closed. Open on desktop, closed on
+  // narrow / touch screens so the art is unobstructed until you tap it.
+  const [settingsOpen, setSettingsOpen] = useState(() =>
+    typeof window === "undefined" ? true : window.innerWidth > 900,
+  );
+  const [help, setHelp] = useState(false); // the guide modal (opened from the ⓘ on the top line)
 
   // Update the swirl overlay imperatively (called every frame from the engine) so it tracks the
   // finger at 60 fps without triggering a React re-render. Kept deliberately subtle: just a soft
@@ -84,6 +103,26 @@ export default function BoidsCanvas() {
     handleRef.current?.clearTerrain();
   }, []);
 
+  // Full live config snapshot (all fields, incl. swirl + terrain) → so "Save as default" and presets
+  // capture EVERYTHING, not just the Swarm panel's own sliders.
+  const getFullConfig = useCallback(() => handleRef.current?.getConfig() ?? null, []);
+
+  // When a preset is loaded, ControlPanel pushes the full config to the engine; this nonce lets the
+  // Terrain and Swirl panels re-sync their displayed sliders to the loaded values.
+  const [sync, setSync] = useState<{ nonce: number; cfg: Partial<BoidsConfig> } | null>(null);
+  const onConfigApplied = useCallback(
+    (cfg: Partial<BoidsConfig>) => setSync((s) => ({ nonce: (s?.nonce ?? 0) + 1, cfg })),
+    [],
+  );
+  // Apply a whole config (preset load / reset): push to the sim AND re-sync every panel's sliders.
+  const applyConfig = useCallback(
+    (cfg: Partial<BoidsConfig>) => {
+      onChange(cfg);
+      onConfigApplied(cfg);
+    },
+    [onChange, onConfigApplied],
+  );
+
   return (
     <>
       <canvas ref={canvasRef} className="swarm-canvas" />
@@ -96,10 +135,75 @@ export default function BoidsCanvas() {
         <div className="swarm-error">{error}</div>
       ) : (
         <>
-          <ControlPanel onChange={onChange} onReseed={onReseed} fps={fps} />
+          {/* Populations stays pinned on its own, top-right — it's a live readout, not a setting. */}
           <PopulationMonitor counts={counts} numSpecies={numSpecies} colors={colors} />
-          <SwirlPanel onChange={onChange} dir={swirlDir} />
-          <TerrainPanel onChange={onChange} onClearTerrain={onClearTerrain} />
+          {/* ONE settings card. A master line collapses the whole thing to a single row; open, it
+              reveals the Swarm / Terrain / Swirl sections (accordion — one at a time), each of which
+              has its own sub-sections. The card is the single scroller (height-capped in CSS). */}
+          <div className={`settings ${settingsOpen ? "" : "settings--closed"}`}>
+            {/* Top line, always visible: the master collapse toggle + the always-on controls
+                (guide, live FPS, restart). These stay reachable even when everything is collapsed. */}
+            <div className="settings__head">
+              <button
+                className="settings__toggle"
+                onClick={() => setSettingsOpen((o) => !o)}
+                title={settingsOpen ? "Collapse controls" : "Expand controls"}
+              >
+                <span className="settings__arrow">{settingsOpen ? "▾" : "▸"}</span>
+                Settings
+              </button>
+              <button
+                className="panel__info"
+                onClick={() => setHelp(true)}
+                title="What is this? Open the guide."
+                aria-label="Open guide"
+              >
+                ⓘ
+              </button>
+              <span className="panel__fps">{fps > 0 ? `${Math.round(fps)} FPS` : "…"}</span>
+              <button
+                className="panel__restart"
+                onClick={onReseed}
+                title="Restart ecosystem"
+                aria-label="Restart ecosystem"
+              >
+                ↻
+              </button>
+            </div>
+            {settingsOpen && (
+              <div className="settings__body">
+                <ControlPanel
+                  onChange={onChange}
+                  sync={sync}
+                  open={openPanel === "swarm"}
+                  onToggle={() => togglePanel("swarm")}
+                />
+                <TerrainPanel
+                  onChange={onChange}
+                  onClearTerrain={onClearTerrain}
+                  sync={sync}
+                  open={openPanel === "terrain"}
+                  onToggle={() => togglePanel("terrain")}
+                />
+                <SwirlPanel
+                  onChange={onChange}
+                  dir={swirlDir}
+                  sync={sync}
+                  open={openPanel === "swirl"}
+                  onToggle={() => togglePanel("swirl")}
+                />
+                {/* Overarching controls for the WHOLE config, below all three sections. */}
+                <SettingsFooter
+                  getFullConfig={getFullConfig}
+                  applyConfig={applyConfig}
+                  onReseed={onReseed}
+                />
+              </div>
+            )}
+          </div>
+          {/* Rendered outside .settings: that card has backdrop-filter, which would trap a
+              position:fixed modal inside its bounds. */}
+          {help && <HelpModal onClose={() => setHelp(false)} />}
         </>
       )}
     </>

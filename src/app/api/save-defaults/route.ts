@@ -29,9 +29,35 @@ const KEYS = [
   "birthRate",
   "adaptiveStrength",
   "starveRate",
+  // swirl
+  "swirlStrength",
+  "swirlRadius",
+  "swirlFalloff",
+  "swirlInward",
+  "swirlDir",
+  "swirlRampUp",
+  "swirlRampDown",
+  // terrain
+  "terrainForce",
+  "terrainScale",
+  "terrainCoverage",
+  "terrainWarp",
+  "terrainDrift",
+  "terrainLineCount",
+  "terrainLineWidth",
+  "terrainLineBright",
+  "terrainTint",
+  "terrainShade",
+  "terrainSnowAmount",
+  "terrainBrushSize",
+  "terrainBrushStrength",
+  "terrainBrushDetail",
+  "terrainHealRate",
 ] as const;
 
-const INT_KEYS = new Set(["count", "numSpecies"]);
+const INT_KEYS = new Set(["count", "numSpecies", "terrainLineCount"]);
+// terrain elevation colors (single RGB triples, unlike speciesColors which is an array of them)
+const TERRAIN_COLOR_KEYS = ["terrainValley", "terrainMid", "terrainPeak", "terrainSnow"] as const;
 
 export async function POST(req: Request) {
   if (process.env.NODE_ENV === "production") {
@@ -68,6 +94,24 @@ export async function POST(req: Request) {
   const dominanceMode = ["cyclic", "random", "chaos"].includes(body.dominanceMode as string)
     ? (body.dominanceMode as string)
     : null;
+  const terrainEnabled = typeof body.terrainEnabled === "boolean" ? body.terrainEnabled : null;
+  const terrainTool = ["off", "raise", "lower"].includes(body.terrainTool as string)
+    ? (body.terrainTool as string)
+    : null;
+  // terrain elevation colors (single RGB triples)
+  const terrainColors: Record<string, number[]> = {};
+  for (const k of TERRAIN_COLOR_KEYS) {
+    const c = body[k];
+    if (
+      Array.isArray(c) &&
+      c.length === 3 &&
+      c.every((n) => typeof n === "number" && Number.isFinite(n))
+    ) {
+      terrainColors[k] = (c as number[]).map((n) =>
+        parseFloat(Math.max(0, Math.min(1, n)).toFixed(4)),
+      );
+    }
+  }
 
   // per-species colors: array of [r,g,b] triples (0..1) — optional
   let speciesColors: number[][] | null = null;
@@ -135,6 +179,20 @@ export async function POST(req: Request) {
     const literal = `[${speciesColors.map((c) => `[${c.join(", ")}]`).join(", ")}]`;
     const reCol = /(\n\s*speciesColors:\s*)[^\n]*/;
     if (reCol.test(block)) block = block.replace(reCol, `$1${literal},`);
+  }
+  if (terrainEnabled !== null) {
+    const re = /(\n\s*terrainEnabled:\s*)(?:true|false)/;
+    if (re.test(block)) block = block.replace(re, `$1${terrainEnabled}`);
+  }
+  if (terrainTool) {
+    const re = /(\n\s*terrainTool:\s*)"(?:off|raise|lower)"/;
+    if (re.test(block)) block = block.replace(re, `$1"${terrainTool}"`);
+  }
+  for (const k of TERRAIN_COLOR_KEYS) {
+    const c = terrainColors[k];
+    if (!c) continue;
+    const re = new RegExp(`(\\n\\s*${k}:\\s*)\\[[^\\]]*\\]`);
+    if (re.test(block)) block = block.replace(re, `$1[${c.join(", ")}]`);
   }
 
   const newSrc = src.slice(0, braceStart) + block + src.slice(braceEnd);

@@ -30,8 +30,33 @@ const NUM_KEYS = [
   "birthRate",
   "adaptiveStrength",
   "starveRate",
+  // swirl
+  "swirlStrength",
+  "swirlRadius",
+  "swirlFalloff",
+  "swirlInward",
+  "swirlDir",
+  "swirlRampUp",
+  "swirlRampDown",
+  // terrain
+  "terrainForce",
+  "terrainScale",
+  "terrainCoverage",
+  "terrainWarp",
+  "terrainDrift",
+  "terrainLineCount",
+  "terrainLineWidth",
+  "terrainLineBright",
+  "terrainTint",
+  "terrainShade",
+  "terrainSnowAmount",
+  "terrainBrushSize",
+  "terrainBrushStrength",
+  "terrainBrushDetail",
+  "terrainHealRate",
 ] as const;
-const INT_KEYS = new Set(["count", "numSpecies"]);
+const INT_KEYS = new Set(["count", "numSpecies", "terrainLineCount"]);
+const TERRAIN_COLOR_KEYS = ["terrainValley", "terrainMid", "terrainPeak", "terrainSnow"] as const;
 
 // Keep only known, well-typed fields — never write arbitrary posted JSON into source.
 function sanitizeConfig(input: unknown): Record<string, unknown> {
@@ -62,6 +87,18 @@ function sanitizeConfig(input: unknown): Record<string, unknown> {
       out.speciesColors = (c.speciesColors as number[][]).map((col) =>
         col.map((n) => parseFloat(Math.max(0, Math.min(1, n)).toFixed(4))),
       );
+    }
+  }
+  if (typeof c.terrainEnabled === "boolean") out.terrainEnabled = c.terrainEnabled;
+  if (["off", "raise", "lower"].includes(c.terrainTool as string)) out.terrainTool = c.terrainTool;
+  for (const k of TERRAIN_COLOR_KEYS) {
+    const col = c[k];
+    if (
+      Array.isArray(col) &&
+      col.length === 3 &&
+      col.every((n) => typeof n === "number" && Number.isFinite(n))
+    ) {
+      out[k] = (col as number[]).map((n) => parseFloat(Math.max(0, Math.min(1, n)).toFixed(4)));
     }
   }
   return out;

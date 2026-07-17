@@ -38,6 +38,8 @@ export interface BoidsHandle {
   reseed: () => void;
   /** Erase all sculpted terrain (reset the delta buffer to 0). */
   clearTerrain: () => void;
+  /** Snapshot of the full live config (all fields, incl. swirl + terrain) — for presets / defaults. */
+  getConfig: () => BoidsConfig;
 }
 
 export interface EngineOptions {
@@ -57,7 +59,11 @@ export interface EngineOptions {
 const TRAIL_FORMAT: GPUTextureFormat = "rgba8unorm";
 const PARAMS_FLOATS = 40; // compute uniform (160 bytes; 33..36 = terrain force/scale/drift/coverage)
 const FLOATS_PER_BOID = 8; // pos.xy, vel.xy, species, energy, age, flash
+// Cap the render resolution. Touch devices (the iPad) get a lower cap: a Retina panel at dpr 2
+// renders ~4× the pixels, and the terrain fragment (multi-octave fbm + gradient samples per pixel)
+// is fill-rate bound → capping dpr there is the single biggest FPS win, for a small sharpness cost.
 const MAX_DPR = 2;
+const MAX_DPR_TOUCH = 1.5;
 // Stir gesture: rotating the finger sets the swirl direction. We accumulate the per-frame turn
 // (sin of the angle between consecutive move vectors, speed-independent) and flip when a clear
 // rotation is reached. Straight drags have ~0 turn → they only move the vortex, never flip it.
@@ -284,10 +290,20 @@ export async function createBoidsEngine(
   // Sculpted terrain delta: mutable f32 height field over screen uv (added on top of terrainH).
   const deltaBuffer = device.createBuffer({
     size: DELTA_W * DELTA_H * 4,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
   const deltaZeros = new Float32Array(DELTA_W * DELTA_H);
   device.queue.writeBuffer(deltaBuffer, 0, deltaZeros); // start flat
+  // Fragment-stage copy of the delta field as a TEXTURE. The terrain render shader samples this
+  // instead of the storage buffer, because Apple/iOS WebGPU forbids storage buffers in the fragment
+  // stage (maxStorageBuffersInFragmentStage = 0 → silent black terrain). Refreshed from deltaBuffer
+  // every frame via copyBufferToTexture (bytesPerRow = DELTA_W*4 = 1280, a multiple of 256 ✓).
+  const deltaTex = device.createTexture({
+    size: [DELTA_W, DELTA_H],
+    format: "r32float",
+    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+  });
+  const deltaTexView = deltaTex.createView();
   // Brush uniform for the edit pass (12 floats).
   const editParamsBuffer = device.createBuffer({
     size: 12 * 4,
@@ -378,7 +394,9 @@ export async function createBoidsEngine(
   const terrainBGL = device.createBindGroupLayout({
     entries: [
       { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
-      { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "read-only-storage" } }, // delta
+      // delta as a TEXTURE (not a fragment storage buffer — unsupported on Apple/iOS). r32float is
+      // unfilterable → sampleType "unfilterable-float", sampled via textureLoad (no sampler).
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
     ],
   });
 
@@ -569,7 +587,7 @@ export async function createBoidsEngine(
     layout: terrainBGL,
     entries: [
       { binding: 0, resource: { buffer: terrainParamsBuffer } },
-      { binding: 1, resource: { buffer: deltaBuffer } },
+      { binding: 1, resource: deltaTexView },
     ],
   });
 
@@ -583,7 +601,8 @@ export async function createBoidsEngine(
   let aspect = 1;
 
   function resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+    const cap = window.matchMedia?.("(pointer: coarse)").matches ? MAX_DPR_TOUCH : MAX_DPR;
+    const dpr = Math.min(window.devicePixelRatio || 1, cap);
     const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
     const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
     if (canvas.width === w && canvas.height === h && trailTexture) return;
@@ -760,25 +779,55 @@ export async function createBoidsEngine(
     params[23] = gridY;
     params[24] = cfg.declump; // anti-crowd strength (0 = off)
 
-    // Tool decides what a single finger does: with a sculpt tool active it PAINTS the terrain
-    // (brush); otherwise it drives the swirl vortex. ≥2 fingers do neither (reserved).
-    const sculptMode = cfg.terrainEnabled && cfg.terrainTool !== "off";
-    const oneFinger = activePointers.size === 1;
+    // Terrain sculpting is gesture-driven (multi-touch): 2 fingers RAISE mountains, 3+ fingers
+    // LOWER valleys. The brush centre is the finger centroid; its radius is the finger spread
+    // (pinch = small, spread hand = large), aspect-corrected to match the round on-screen brush.
+    // A single finger is the swirl vortex. Legacy single-finger button paint (dev TerrainPanel)
+    // still works when a sculpt tool is explicitly selected.
+    const terrainOn = cfg.terrainEnabled;
+    const nFingers = activePointers.size;
+    const buttonSculpt = terrainOn && cfg.terrainTool !== "off" && nFingers === 1;
+    const gestureSculpt = terrainOn && nFingers >= 2;
     let brushActive = 0;
     let brushU = 0.5;
     let brushV = 0.5;
-    if (sculptMode && oneFinger) {
+    let brushRadius = cfg.terrainBrushSize;
+    let brushSign = 1; // +1 raise, -1 lower
+    if (gestureSculpt) {
+      let cx = 0;
+      let cy = 0;
+      for (const p of activePointers.values()) {
+        cx += p.nx;
+        cy += p.ny;
+      }
+      cx /= nFingers;
+      cy /= nFingers;
+      let spread = 0;
+      for (const p of activePointers.values()) {
+        const du = (p.nx - cx) * aspect;
+        const dv = p.ny - cy;
+        spread = Math.max(spread, Math.hypot(du, dv));
+      }
+      brushU = cx;
+      brushV = cy;
+      // fingers sit ~on the brush rim; floor keeps a usable brush when pinched, cap bounds huge spreads
+      brushRadius = Math.min(0.55, Math.max(0.08, spread * 1.15));
+      brushSign = nFingers === 2 ? 1 : -1; // 2 = raise, 3+ = lower
+      brushActive = 1;
+    } else if (buttonSculpt) {
       const p = activePointers.values().next().value;
       if (p) {
         brushU = p.nx;
         brushV = p.ny;
+        brushRadius = cfg.terrainBrushSize;
+        brushSign = cfg.terrainTool === "lower" ? -1 : 1;
         brushActive = 1;
       }
     }
 
     // swirl: exactly one finger AND no sculpt tool → the vortex follows it and ramps up; otherwise
     // it fades out in place. Center is in sim space (y up, x aspect-scaled), matching pos.
-    const swirlFinger = oneFinger && !sculptMode;
+    const swirlFinger = nFingers === 1 && !buttonSculpt;
     let targetAmp = 0;
     if (swirlFinger) {
       const p = activePointers.values().next().value;
@@ -876,8 +925,8 @@ export async function createBoidsEngine(
     // brush uniform for the sculpt pass (heal always runs; the brush adds only while held)
     editParams[0] = brushU;
     editParams[1] = brushV;
-    editParams[2] = cfg.terrainBrushSize;
-    editParams[3] = cfg.terrainBrushStrength * (cfg.terrainTool === "lower" ? -1 : 1);
+    editParams[2] = brushRadius;
+    editParams[3] = cfg.terrainBrushStrength * brushSign;
     editParams[4] = cfg.terrainBrushDetail;
     editParams[5] = cfg.terrainHealRate;
     editParams[6] = brushActive;
@@ -938,6 +987,13 @@ export async function createBoidsEngine(
       editPass.setBindGroup(0, terrainEditGroup);
       editPass.dispatchWorkgroups(Math.ceil((DELTA_W * DELTA_H) / 64));
       editPass.end();
+      // Mirror the updated delta buffer into the texture the fragment shader samples (the render
+      // stage can't read the storage buffer on Apple/iOS). bytesPerRow 1280 is 256-aligned.
+      encoder.copyBufferToTexture(
+        { buffer: deltaBuffer, bytesPerRow: DELTA_W * 4, rowsPerImage: DELTA_H },
+        { texture: deltaTex },
+        { width: DELTA_W, height: DELTA_H },
+      );
     }
 
     // 0) build the spatial grid in THREE separate passes — dispatches within one pass are not
@@ -1072,6 +1128,9 @@ export async function createBoidsEngine(
     clearTerrain() {
       device.queue.writeBuffer(deltaBuffer, 0, deltaZeros);
     },
+    getConfig() {
+      return structuredClone(cfg);
+    },
     dispose() {
       disposed = true;
       cancelAnimationFrame(raf);
@@ -1088,6 +1147,7 @@ export async function createBoidsEngine(
       fadeBuffer.destroy();
       terrainParamsBuffer.destroy();
       deltaBuffer.destroy();
+      deltaTex.destroy();
       editParamsBuffer.destroy();
       triangleBuffer.destroy();
       paletteBuffer.destroy();
