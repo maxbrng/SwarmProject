@@ -48,3 +48,5 @@ next-env.d.ts
 # Ausnahme: die standard README.md des Projekts
 *.md
 !/README.md
+
+certificates

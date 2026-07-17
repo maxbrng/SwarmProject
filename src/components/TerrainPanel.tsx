@@ -159,7 +159,8 @@ const BRUSH_SLIDERS: TerrainSlider[] = [
     min: 0.05,
     max: 0.6,
     step: 0.01,
-    title: "Radius of the sculpt brush (share of screen height).",
+    title:
+      "Radius of the single-finger button brush (share of screen height). Multi-finger gestures ignore this and use your finger spread instead.",
     display: (v) => `${Math.round(v * 100)}%`,
   },
   {
@@ -314,9 +315,13 @@ export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
             Terrain: {enabled ? "on" : "off"}
           </button>
 
-          {/* Sculpt tool: long-press on the map to raise/lower terrain (mode-dependent). */}
+          {/* Sculpt: gesture-driven multi-touch. 2 fingers raise, 3 lower; spread = radius. */}
           <div className="ctrl__label" style={{ marginTop: 6 }}>
-            Sculpt · long-press to build
+            Sculpt · touch gestures
+          </div>
+          <div className="swirl__hint">
+            <b>2 fingers</b> = raise mountains · <b>3 fingers</b> = carve valleys. Spread your fingers
+            wider for a bigger area, pinch for a small one. (1 finger = swirl.)
           </div>
           <div className="panel__modes3">
             {TERRAIN_TOOLS.map((tm) => (
@@ -330,15 +335,13 @@ export default function TerrainPanel({ onChange, onClearTerrain }: Props) {
               </button>
             ))}
           </div>
-          {tool !== "off" && (
-            <div className="swirl__hint">
-              Touch &amp; <b>hold</b> on the map to {tool === "raise" ? "raise mountains" : "carve valleys"};
-              hold longer for more. Drag to sculpt a range. (One finger; ≥2 do nothing.)
-            </div>
-          )}
+          <div className="swirl__hint">
+            Optional override for testing: pick <b>Raise</b>/<b>Lower</b> to sculpt with a single
+            finger too; <b>Off</b> = one finger does the swirl. The multi-finger gestures work either way.
+          </div>
           <div className="section__body">
-            {tool !== "off" && BRUSH_SLIDERS.map(renderSlider)}
-            {tool !== "off" && (
+            {enabled && BRUSH_SLIDERS.map(renderSlider)}
+            {enabled && (
               <button className="panel__reset" onClick={onClearTerrain}>
                 Clear sculpted terrain
               </button>

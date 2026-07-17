@@ -54,6 +54,7 @@ body {
 .swarm-error {
   position: fixed;
   inset: 0;
+  z-index: 100; /* above the canvas + panels so a failure is never hidden behind them */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -62,6 +63,9 @@ body {
   font-size: 1rem;
   line-height: 1.5;
   color: #ff8a8a;
+  background: #0a0a0a; /* solid backdrop so the message is readable over the black canvas */
+  overflow: auto; /* long WGSL/validation messages stay scrollable, not clipped off-screen */
+  white-space: pre-wrap; /* keep multi-line shader errors formatted */
 }
 
 /* ── Population monitor (top right) ───────────────────────────────────────── */
