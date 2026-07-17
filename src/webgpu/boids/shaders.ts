@@ -39,8 +39,16 @@ struct Params {
 // (x∈[-aspect,aspect], y∈[-1,1]); `t` is the already-scaled drift time; `s` the spatial frequency.
 // (Later, gesture-sculpted relief becomes an editable delta added on top of this base.)
 const TERRAIN_WGSL = /* wgsl */ `
+// Exact integer hash (pure bit ops) instead of the classic fract(sin(dot())·43758) — that sin-hash
+// computes DIFFERENTLY on different GPUs (sin of large args + fract precision), which showed up as
+// rectangular block/tile artifacts on the Linux Vulkan driver and would also drift over long run
+// times. Integer ops are bit-identical on every GPU. Input p is integer cell coords (from floor).
 fn thash2(p : vec2f) -> f32 {
-  return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
+  var n = u32(i32(p.x)) * 1597334677u + u32(i32(p.y)) * 3812015801u;
+  n = (n ^ (n >> 16u)) * 2246822519u;
+  n = (n ^ (n >> 13u)) * 3266489917u;
+  n = n ^ (n >> 16u);
+  return f32(n) * (1.0 / 4294967296.0);
 }
 // smooth value noise (0..1) with cubic interpolation
 fn tvnoise(p : vec2f) -> f32 {
