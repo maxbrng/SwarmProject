@@ -34,12 +34,11 @@ export default function PopulationMonitor({ counts, numSpecies, colors }: Props)
           const pct = (v / max) * 100;
           return (
             <div className="popmon__row" key={s}>
-              <span className="popmon__dot" style={{ background: col, boxShadow: `0 0 8px ${col}` }} />
+              {/* color is set as well as background so the CSS glow (drop-shadow currentColor)
+                  picks up the species colour */}
+              <span className="popmon__dot" style={{ background: col, color: col }} />
               <div className="popmon__track">
-                <div
-                  className="popmon__fill"
-                  style={{ width: `${pct}%`, background: col, boxShadow: `0 0 10px ${col}` }}
-                />
+                <div className="popmon__fill" style={{ width: `${pct}%`, background: col }} />
               </div>
               <span className="popmon__num">{v.toLocaleString("en-US")}</span>
             </div>

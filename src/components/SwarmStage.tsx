@@ -20,9 +20,11 @@ export default function SwarmStage() {
   const [support, setSupport] = useState<Support>("checking");
 
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- intentional: probe the browser once on mount */
     if (typeof navigator !== "undefined" && "gpu" in navigator) setSupport("ok");
     else if (typeof window !== "undefined" && !window.isSecureContext) setSupport("insecure");
     else setSupport("missing");
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, []);
 
   if (support === "checking") return null;

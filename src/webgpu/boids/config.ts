@@ -205,7 +205,7 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   boidScale: 0.007,
   trailFade: 0.17,
   colorIntensity: 0.8,
-  declump: 0, // off → exact original density; raise it to thin dense clumps (look + FPS)
+  declump: 0.01, // off → exact original density; raise it to thin dense clumps (look + FPS)
   background: [0, 0, 0],
 
   // swirl (tune live in the SwirlPanel, then bake here)
@@ -213,28 +213,28 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   swirlRadius: 0.4,
   swirlFalloff: 1.6,
   swirlInward: 0,
-  swirlDir: 1,
+  swirlDir: -1,
   swirlRampUp: 0.12,
   swirlRampDown: 0.5,
 
   // terrain (tune live in the TerrainPanel, then bake here)
   terrainEnabled: true,
   terrainForce: 6,
-  terrainScale: 0.85, // lower = bigger mountains / broader valleys (numerically tuned)
+  terrainScale: 2.45, // lower = bigger mountains / broader valleys (numerically tuned)
   terrainCoverage: 0.65, // mostly flat plateau + a few isolated, craggy tall peaks (tuned)
-  terrainWarp: 0, // 0 = current grid-aligned look (dial up for organic, non-grid ridges)
+  terrainWarp: 0.5, // 0 = current grid-aligned look (dial up for organic, non-grid ridges)
   terrainDrift: 0.06,
   terrainLineCount: 15,
-  terrainLineWidth: 1.0,
+  terrainLineWidth: 1,
   terrainLineBright: 0.5,
   terrainTint: 1,
   terrainShade: 0.8,
   // earthy hypsometric ramp: dark blue-green basin → olive slopes → muted rock-brown peaks.
   // Peaks are a medium earthy brown (NOT near-white) so mountain tops don't read as pale blobs;
   // the hill-shading provides the light/dark, not a bright fill color.
-  terrainValley: [0.05, 0.09, 0.11],
-  terrainMid: [0.15, 0.19, 0.12],
-  terrainPeak: [0.44, 0.38, 0.28], // lighter rock so peaks read as high (snow cap added on top)
+  terrainValley: [0.0078, 0.0078, 0.0078],
+  terrainMid: [0.1529, 0.1608, 0.1451],
+  terrainPeak: [0.4157, 0.3882, 0.3451], // lighter rock so peaks read as high (snow cap added on top)
   terrainSnow: [0.9, 0.92, 0.96], // snow/rock cap on the very highest ground
   terrainSnowAmount: 0.85,
 
@@ -256,5 +256,5 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   seedMode: "clustered",
   birthMode: "adaptive",
   dominanceMode: "cyclic",
-  speciesColors: DEFAULT_COLORS.map((c) => [c[0], c[1], c[2]] as RGB),
+  speciesColors: [[0.25, 0.65, 1], [1, 0.45, 0.35], [0.55, 1, 0.5], [1, 0.85, 0.3], [0.8, 0.5, 1], [1, 0.5, 0.85]],
 };
