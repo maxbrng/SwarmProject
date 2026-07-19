@@ -4,14 +4,27 @@
   margin: 0;
 }
 
+/* Form controls don't inherit the page font by default — without this the buttons/inputs fall back
+   to the UA font (Arial) and break the monospace chrome. */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
 html,
 body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #05060a;
-  color: #e8eefc;
-  font-family: ui-sans-serif, system-ui, Arial, sans-serif;
+  background: #000000;
+  color: #e9e9e9;
+  /* Monospace throughout the chrome: the UI reads as an instrument/specimen label next to the
+     artwork, not as a consumer app. Geist Mono is already self-hosted via next/font (offline-safe). */
+  font-family:
+    var(--font-geist-mono), ui-monospace, "SF Mono", Menlo, monospace;
+  -webkit-font-smoothing: antialiased;
 }
 
 .swarm-main {
@@ -45,9 +58,9 @@ body {
   border-radius: 50%;
   background: radial-gradient(
     circle,
-    rgba(150, 190, 255, 0.16) 0%,
-    rgba(150, 190, 255, 0.05) 45%,
-    rgba(150, 190, 255, 0) 72%
+    rgba(255, 255, 255, 0.16) 0%,
+    rgba(255, 255, 255, 0.05) 45%,
+    rgba(255, 255, 255, 0) 72%
   );
 }
 
@@ -63,7 +76,7 @@ body {
   font-size: 1rem;
   line-height: 1.5;
   color: #ff8a8a;
-  background: #0a0a0a; /* solid backdrop so the message is readable over the black canvas */
+  background: #000000; /* solid backdrop so the message is readable over the black canvas */
   overflow: auto; /* long WGSL/validation messages stay scrollable, not clipped off-screen */
   white-space: pre-wrap; /* keep multi-line shader errors formatted */
 }
@@ -75,12 +88,11 @@ body {
   right: 16px;
   width: 240px;
   padding: 12px 14px;
-  border-radius: 12px;
-  background: rgba(10, 14, 24, 0.72);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(120, 160, 230, 0.18);
-  color: #dce6fb;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #d6d6d6;
   font-size: 12px;
   user-select: none;
   z-index: 10;
@@ -102,7 +114,7 @@ body {
 .popmon__total {
   font-variant-numeric: tabular-nums;
   font-size: 11px;
-  color: #7fb0ff;
+  color: #ffffff;
 }
 
 .popmon__rows {
@@ -121,19 +133,19 @@ body {
 .popmon__dot {
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: 0;
 }
 
 .popmon__track {
   height: 9px;
-  border-radius: 5px;
+  border-radius: 0;
   background: rgba(255, 255, 255, 0.07);
   overflow: hidden;
 }
 
 .popmon__fill {
   height: 100%;
-  border-radius: 5px;
+  border-radius: 0;
   transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   min-width: 2px;
 }
@@ -141,7 +153,7 @@ body {
 .popmon__num {
   font-variant-numeric: tabular-nums;
   text-align: right;
-  color: #cfe0ff;
+  color: #dedede;
 }
 
 /* ── Help / info modal ────────────────────────────────────────────────────── */
@@ -153,9 +165,8 @@ body {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(2, 4, 10, 0.62);
+  background: rgba(0, 0, 0, 0.62);
   backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
 }
 
 .help__box {
@@ -163,11 +174,11 @@ body {
   max-height: 86vh;
   display: flex;
   flex-direction: column;
-  border-radius: 14px;
-  background: rgba(14, 19, 32, 0.96);
-  border: 1px solid rgba(120, 160, 230, 0.22);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-  color: #dce6fb;
+  color: #d6d6d6;
 }
 
 .help__head {
@@ -175,7 +186,7 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(120, 160, 230, 0.16);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 .help__title {
@@ -187,7 +198,7 @@ body {
 .help__close {
   background: none;
   border: none;
-  color: #9fb2d8;
+  color: #9c9c9c;
   font-size: 16px;
   cursor: pointer;
 }
@@ -205,7 +216,7 @@ body {
 
 .help__body h4 {
   margin: 16px 0 6px;
-  color: #9fc0ff;
+  color: #cccccc;
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -213,13 +224,13 @@ body {
 
 .help__body p {
   margin: 0 0 8px;
-  color: #c3cfe6;
+  color: #c8c8c8;
 }
 
 .help__body ul {
   margin: 0 0 8px;
   padding-left: 18px;
-  color: #c3cfe6;
+  color: #c8c8c8;
 }
 
 .help__body li {
@@ -227,12 +238,12 @@ body {
 }
 
 .help__body b {
-  color: #eaf1ff;
+  color: #ffffff;
 }
 
 .help__foot {
   margin-top: 14px !important;
-  color: #8ea3c8 !important;
+  color: #8e8e8e !important;
   font-style: italic;
 }
 
@@ -253,12 +264,11 @@ body {
   max-height: calc(100dvh - 24px);
   overflow-y: auto;
   padding: 8px 12px;
-  border-radius: 12px;
-  background: rgba(10, 14, 24, 0.72);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(120, 160, 230, 0.18);
-  color: #dce6fb;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #d6d6d6;
   font-size: 12px;
   user-select: none;
   scrollbar-width: thin;
@@ -274,7 +284,7 @@ body {
   align-items: center;
   gap: 8px;
   padding-bottom: 6px;
-  border-bottom: 1px solid rgba(120, 160, 230, 0.18);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
 }
 .settings--closed .settings__head {
   padding-bottom: 0;
@@ -286,7 +296,7 @@ body {
   gap: 6px;
   background: none;
   border: none;
-  color: #8fa5cc; /* muted small-caps label → the least prominent of the three heading levels */
+  color: #909090; /* muted small-caps label → the least prominent of the three heading levels */
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.09em;
@@ -295,10 +305,10 @@ body {
   padding: 2px 0;
 }
 .settings__toggle:hover {
-  color: #cdd9f2;
+  color: #d2d2d2;
 }
 .settings__arrow {
-  color: #6f86b5;
+  color: #747474;
   font-size: 11px;
 }
 .settings__body {
@@ -312,7 +322,7 @@ body {
 .settings .panel__toggle {
   font-size: 14px;
   font-weight: 700;
-  color: #eaf1ff;
+  color: #ffffff;
   letter-spacing: 0;
   text-transform: none;
   padding: 4px 0;
@@ -330,12 +340,11 @@ body {
   border-radius: 0;
   padding: 0;
   backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 .settings .panel + .panel {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgba(120, 160, 230, 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
 /* Overarching footer (presets / save / reset), set off from the sections by a stronger divider. */
 .settings__footer {
@@ -343,7 +352,7 @@ body {
   flex-direction: column;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid rgba(120, 160, 230, 0.22);
+  border-top: 1px solid rgba(255, 255, 255, 0.22);
 }
 /* Bigger, comfier tap targets on touch screens (the exhibition panel) — no effect with a mouse. */
 @media (pointer: coarse) {
@@ -378,12 +387,11 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(10, 14, 24, 0.72);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.72);
   backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(120, 160, 230, 0.18);
-  color: #dce6fb;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #d6d6d6;
   font-size: 12px;
   user-select: none;
   z-index: 10;
@@ -411,11 +419,11 @@ body {
   margin: 8px 0 2px;
   font-size: 11px;
   line-height: 1.45;
-  color: #9fb2d8;
+  color: #9c9c9c;
 }
 
 .swirl__hint b {
-  color: #eaf1ff;
+  color: #ffffff;
 }
 
 .swirl__dir {
@@ -426,17 +434,17 @@ body {
   width: 100%;
   margin-top: 8px;
   padding: 7px 0;
-  border-radius: 8px;
-  border: 1px solid rgba(120, 160, 230, 0.35);
-  background: rgba(91, 140, 255, 0.18);
-  color: #dce6fb;
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.18);
+  color: #d6d6d6;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .swirl__dir:hover {
-  background: rgba(91, 140, 255, 0.3);
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .swirl__dirIcon {
@@ -447,12 +455,12 @@ body {
 /* ── Presets ──────────────────────────────────────────────────────────────── */
 .presets {
   margin-top: 8px;
-  border-top: 1px solid rgba(120, 160, 230, 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
   padding-top: 8px;
 }
 
 .presets__head {
-  color: #9fb2d8;
+  color: #9c9c9c;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -469,23 +477,23 @@ body {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border-radius: 7px;
-  border: 1px solid rgba(120, 160, 230, 0.25);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   background: rgba(255, 255, 255, 0.05);
-  color: #eaf1ff;
+  color: #ffffff;
   font-size: 12px;
 }
 
 .presets__input::placeholder {
-  color: #7386a8;
+  color: #787878;
 }
 
 .presets__btn {
   padding: 5px 10px;
-  border-radius: 7px;
-  border: 1px solid rgba(120, 160, 230, 0.25);
-  background: rgba(91, 140, 255, 0.18);
-  color: #dce6fb;
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.18);
+  color: #d6d6d6;
   font-size: 12px;
   cursor: pointer;
 }
@@ -511,10 +519,10 @@ body {
   flex: 1;
   text-align: left;
   padding: 5px 8px;
-  border-radius: 7px;
-  border: 1px solid rgba(120, 160, 230, 0.18);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.04);
-  color: #dce6fb;
+  color: #d6d6d6;
   font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
@@ -523,12 +531,12 @@ body {
 }
 
 .presets__load:hover {
-  background: rgba(91, 140, 255, 0.22);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .presets__del {
   width: 26px;
-  border-radius: 7px;
+  border-radius: 0;
   border: 1px solid rgba(255, 120, 120, 0.25);
   background: rgba(255, 120, 120, 0.1);
   color: #ffb0b0;
@@ -543,32 +551,32 @@ body {
 /* Rename / overwrite action buttons on a preset row */
 .presets__act {
   width: 26px;
-  border-radius: 7px;
-  border: 1px solid rgba(120, 160, 230, 0.22);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
   background: rgba(255, 255, 255, 0.05);
-  color: #cfe0ff;
+  color: #dedede;
   font-size: 12px;
   cursor: pointer;
 }
 
 .presets__act:hover {
-  background: rgba(91, 140, 255, 0.22);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .presets__act--ok {
-  border-color: rgba(95, 220, 150, 0.4);
-  background: rgba(95, 220, 150, 0.16);
-  color: #b6f5d0;
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
 }
 
 .presets__renameInput {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border-radius: 7px;
-  border: 1px solid rgba(120, 160, 230, 0.45);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.45);
   background: rgba(255, 255, 255, 0.06);
-  color: #eaf1ff;
+  color: #ffffff;
   font-size: 12px;
 }
 
@@ -577,7 +585,7 @@ body {
   margin-top: 6px;
   font-size: 11px;
   line-height: 1.3;
-  color: #9fe6bf;
+  color: #e0e0e0;
 }
 
 /* Dev-only: bake the working presets into code (presets.ts) */
@@ -585,16 +593,16 @@ body {
   width: 100%;
   margin-top: 8px;
   padding: 6px 0;
-  border-radius: 8px;
-  border: 1px solid rgba(120, 160, 230, 0.25);
-  background: rgba(91, 140, 255, 0.14);
-  color: #cfe0ff;
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.14);
+  color: #dedede;
   font-size: 12px;
   cursor: pointer;
 }
 
 .presets__publish:hover:not(:disabled) {
-  background: rgba(91, 140, 255, 0.28);
+  background: rgba(255, 255, 255, 0.28);
 }
 
 .presets__publish:disabled {
@@ -603,9 +611,9 @@ body {
 }
 
 .presets__publish--saved {
-  border-color: rgba(95, 220, 150, 0.5);
-  background: rgba(95, 220, 150, 0.18);
-  color: #b6f5d0;
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
 }
 
 .presets__publish--error {
@@ -616,10 +624,10 @@ body {
 
 /* Small restart button in the panel header (visible even when the panel is collapsed) */
 .panel__restart {
-  border-radius: 7px;
-  border: 1px solid rgba(120, 160, 230, 0.3);
-  background: rgba(91, 140, 255, 0.16);
-  color: #cfe0ff;
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.16);
+  color: #dedede;
   width: 26px;
   height: 22px;
   padding: 0;
@@ -629,7 +637,7 @@ body {
 }
 
 .panel__restart:hover {
-  background: rgba(91, 140, 255, 0.3);
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .panel__head {
@@ -641,7 +649,7 @@ body {
 .panel__info {
   background: none;
   border: none;
-  color: #7fb0ff;
+  color: #ffffff;
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
@@ -660,7 +668,7 @@ body {
 .panel__toggle {
   background: none;
   border: none;
-  color: #dce6fb;
+  color: #d6d6d6;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -670,7 +678,7 @@ body {
 
 .panel__fps {
   font-variant-numeric: tabular-nums;
-  color: #7fb0ff;
+  color: #ffffff;
   font-size: 11px;
 }
 
@@ -683,7 +691,7 @@ body {
 
 /* Collapsible categories */
 .section {
-  border-top: 1px solid rgba(120, 160, 230, 0.14);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
   padding-top: 6px;
 }
 
@@ -695,7 +703,7 @@ body {
   padding: 4px 0;
   background: none;
   border: none;
-  color: #9fb2d8;
+  color: #9c9c9c;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -704,11 +712,11 @@ body {
 }
 
 .section__head:hover {
-  color: #dce6fb;
+  color: #d6d6d6;
 }
 
 .section__arrow {
-  color: #6f86b5;
+  color: #747474;
   font-size: 10px;
   width: 10px;
 }
@@ -728,22 +736,51 @@ body {
 }
 
 .ctrl__label {
-  color: #aebbd6;
+  color: #b0b0b0;
 }
 
 .ctrl__val {
   font-variant-numeric: tabular-nums;
-  color: #7fb0ff;
+  color: #ffffff;
   text-align: right;
 }
 
+/* Hard-edged slider: a 2px hairline track with a tall white bar as the handle — reads like a
+   measuring instrument rather than a rounded UI control. */
 .ctrl__slider {
   grid-column: 1 / -1;
   width: 100%;
   height: 16px;
   margin: 0;
-  accent-color: #5b8cff;
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+.ctrl__slider::-webkit-slider-runnable-track {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.22);
+}
+.ctrl__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 9px;
+  height: 16px;
+  margin-top: -7px; /* centre the bar on the 2px track */
+  background: #ffffff;
+  border: 0;
+  border-radius: 0;
+}
+.ctrl__slider::-moz-range-track {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.22);
+}
+.ctrl__slider::-moz-range-thumb {
+  width: 9px;
+  height: 16px;
+  background: #ffffff;
+  border: 0;
+  border-radius: 0;
 }
 
 .panel__modes {
@@ -787,25 +824,20 @@ body {
   height: 28px;
   padding: 0;
   border: none;
-  border-radius: 50%;
+  border-radius: 0;
   cursor: pointer;
-  box-shadow:
-    0 0 0 2px rgba(255, 255, 255, 0.18),
-    0 2px 6px rgba(0, 0, 0, 0.45);
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28);
+  transition: box-shadow 0.1s linear;
 }
 
 .swatch__btn:hover {
-  transform: scale(1.12);
-  box-shadow:
-    0 0 0 2px rgba(255, 255, 255, 0.55),
-    0 0 12px rgba(120, 160, 230, 0.55);
+  box-shadow: 0 0 0 1px #ffffff;
 }
 
 .swatch__label {
   font-size: 10px;
   letter-spacing: 0.02em;
-  color: #8ea3c8;
+  color: #8e8e8e;
 }
 
 /* ── Custom HSV color picker popover ──────────────────────────────────────── */
@@ -819,9 +851,9 @@ body {
   position: fixed;
   z-index: 60;
   padding: 10px;
-  border-radius: 12px;
-  background: rgba(16, 21, 34, 0.98);
-  border: 1px solid rgba(120, 160, 230, 0.28);
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.28);
   box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
   display: flex;
   flex-direction: column;
@@ -832,7 +864,7 @@ body {
   position: relative;
   width: 100%;
   height: 120px;
-  border-radius: 8px;
+  border-radius: 0;
   cursor: crosshair;
   touch-action: none;
 }
@@ -841,7 +873,7 @@ body {
   position: absolute;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: 0;
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
   transform: translate(-50%, -50%);
@@ -852,7 +884,7 @@ body {
   position: relative;
   width: 100%;
   height: 14px;
-  border-radius: 7px;
+  border-radius: 0;
   cursor: pointer;
   touch-action: none;
   background: linear-gradient(
@@ -872,7 +904,7 @@ body {
   top: 50%;
   width: 8px;
   height: 20px;
-  border-radius: 4px;
+  border-radius: 0;
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
   transform: translate(-50%, -50%);
@@ -888,7 +920,7 @@ body {
 .cpick__preview {
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px solid rgba(255, 255, 255, 0.2);
   flex: none;
 }
@@ -897,10 +929,10 @@ body {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border-radius: 7px;
-  border: 1px solid rgba(120, 160, 230, 0.25);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   background: rgba(255, 255, 255, 0.05);
-  color: #eaf1ff;
+  color: #ffffff;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-transform: lowercase;
@@ -908,18 +940,18 @@ body {
 
 .panel__mode {
   padding: 6px 0;
-  border-radius: 8px;
-  border: 1px solid rgba(120, 160, 230, 0.25);
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   background: rgba(255, 255, 255, 0.04);
-  color: #aebbd6;
+  color: #b0b0b0;
   font-size: 12px;
   cursor: pointer;
 }
 
 .panel__mode--active {
-  border-color: rgba(120, 160, 230, 0.7);
-  background: rgba(91, 140, 255, 0.28);
-  color: #eaf1ff;
+  border-color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.28);
+  color: #ffffff;
   font-weight: 600;
 }
 
@@ -927,10 +959,10 @@ body {
 .panel__reset {
   margin-top: 4px;
   padding: 6px 0;
-  border-radius: 8px;
-  border: 1px solid rgba(120, 160, 230, 0.25);
-  background: rgba(91, 140, 255, 0.12);
-  color: #cfe0ff;
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.12);
+  color: #dedede;
   font-size: 12px;
   cursor: pointer;
 }
@@ -938,12 +970,12 @@ body {
 .panel__save {
   margin-top: 8px;
   font-weight: 600;
-  background: rgba(91, 140, 255, 0.22);
+  background: rgba(255, 255, 255, 0.22);
 }
 
 .panel__save:hover:not(:disabled),
 .panel__reset:hover {
-  background: rgba(91, 140, 255, 0.32);
+  background: rgba(255, 255, 255, 0.32);
 }
 
 .panel__save:disabled {
@@ -952,13 +984,441 @@ body {
 }
 
 .panel__save--saved {
-  border-color: rgba(95, 220, 150, 0.5);
-  background: rgba(95, 220, 150, 0.18);
-  color: #b6f5d0;
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
 }
 
 .panel__save--error {
   border-color: rgba(255, 120, 120, 0.5);
   background: rgba(255, 120, 120, 0.16);
   color: #ffc2c2;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   BRUTALIST CHROME
+   Monochrome, hard-edged, monospace. Every control is a bordered rectangle that
+   INVERTS (white fill, black text) on hover / when active. The only colour left in
+   the interface is the species palette in the population readout — colour appears
+   solely where it carries meaning, i.e. where it belongs to the artwork itself.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* Black glass, hairline edge, no rounding. saturate(0) drains the colour out of the
+   artwork seen THROUGH the panel — the chrome stays monochrome even over the swarm. */
+.settings,
+.popmon {
+  background: rgba(0, 0, 0, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(14px) saturate(0);
+}
+
+/* Specimen labels: uppercase, widely tracked. */
+.settings__toggle,
+.panel__toggle,
+.section__head,
+.popmon__title,
+.presets__head,
+.ctrl__label,
+.panel__mode,
+.panel__reset,
+.panel__save,
+.presets__btn,
+.presets__publish,
+.presets__load,
+.swirl__dir {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* Hierarchy by scale + weight only (everything is caps + mono). */
+.settings__toggle {
+  font-size: 11px;
+}
+.settings .panel__toggle {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  /* beats the earlier `.settings .panel__toggle { text-transform: none }` (same specificity, later) */
+  text-transform: uppercase;
+}
+.section__head {
+  font-size: 10px;
+}
+.ctrl__label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+/* Controls: transparent rectangle → inverts on hover. */
+.panel__mode,
+.panel__reset,
+.panel__save,
+.presets__btn,
+.presets__publish,
+.presets__load,
+.swirl__dir,
+.panel__restart {
+  font-family: inherit;
+  font-size: 10px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #d6d6d6;
+  transition:
+    background-color 0.08s linear,
+    color 0.08s linear,
+    border-color 0.08s linear;
+}
+.panel__mode:hover,
+.panel__reset:hover,
+.panel__save:hover:not(:disabled),
+.presets__btn:hover:not(:disabled),
+.presets__publish:hover:not(:disabled),
+.presets__load:hover,
+.swirl__dir:hover,
+.panel__restart:hover {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
+}
+.panel__mode--active {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
+  font-weight: 700;
+}
+
+/* Text inputs match the same rectangle language. */
+.presets__input,
+.presets__renameInput {
+  font-family: inherit;
+  border-radius: 0;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+}
+
+/* Population readout: flat bars, no glow — the colour alone does the work. */
+.popmon__track {
+  background: rgba(255, 255, 255, 0.1);
+}
+.popmon__num,
+.popmon__total,
+.ctrl__val,
+.panel__fps {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+}
+
+/* Re-assert the transient save/publish states (they must survive the generic rule above). */
+.panel__save--saved,
+.presets__publish--saved {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
+}
+.panel__save--error,
+.presets__publish--error {
+  background: rgba(255, 120, 120, 0.16);
+  border-color: rgba(255, 120, 120, 0.5);
+  color: #ffc2c2;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   PLANNING-SCREEN LAYER
+   Tactical-HUD detailing on top of the brutalist base: chamfered corners, corner
+   brackets, scanlines, indexed sections and measurement ticks. The goal is that the
+   chrome reads as a designed instrument panel, not as a plain black rectangle.
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* The panel no longer scrolls itself — the BODY does. That keeps the title bar pinned and, more
+   importantly, stops the decorative pseudo-elements below from scrolling away with the content. */
+.settings {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: none;
+  /* asymmetric cut: top-right + bottom-left. Reads as "cut from sheet", not "rounded card". */
+  clip-path: polygon(
+    0 0,
+    calc(100% - 18px) 0,
+    100% 18px,
+    100% 100%,
+    18px 100%,
+    0 calc(100% - 18px)
+  );
+  background: rgba(0, 0, 0, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+}
+.settings__body {
+  overflow-y: auto;
+  min-height: 0; /* lets the flex child actually shrink and scroll */
+  scrollbar-width: thin;
+  counter-reset: sect;
+}
+.popmon {
+  border: none;
+  clip-path: polygon(
+    0 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    100% 100%,
+    14px 100%,
+    0 calc(100% - 14px)
+  );
+  background: rgba(0, 0, 0, 0.82);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.32);
+}
+
+/* Corner brackets on the two square corners (the chamfer handles the other two). */
+.settings::before,
+.popmon::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0.55;
+  background:
+    linear-gradient(#fff, #fff) 0 0 / 9px 1px no-repeat,
+    linear-gradient(#fff, #fff) 0 0 / 1px 9px no-repeat,
+    linear-gradient(#fff, #fff) 100% 100% / 9px 1px no-repeat,
+    linear-gradient(#fff, #fff) 100% 100% / 1px 9px no-repeat;
+}
+
+/* Fine scanlines — gives the panels the quality of a screen rather than a surface. */
+.settings::after,
+.popmon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.035) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+/* Keep real content above the decoration. */
+.settings__head,
+.settings__body,
+.popmon__head,
+.popmon__rows {
+  position: relative;
+  z-index: 3;
+}
+
+/* Title bar: hairline rule with a bright leading segment (a "designed" tick, not just a divider). */
+.settings__head {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+  padding-bottom: 7px;
+}
+.settings__head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  width: 34px;
+  height: 1px;
+  background: #ffffff;
+}
+
+/* Indexed sections: 01 / 02 / 03 — the single strongest "planning screen" signal. */
+.settings .panel__toggle::before {
+  counter-increment: sect;
+  content: counter(sect, decimal-leading-zero);
+  margin-right: 9px;
+  color: rgba(255, 255, 255, 0.4);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+/* Sliders get a measurement scale under the track. */
+.ctrl__slider {
+  background-image: repeating-linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.22) 0 1px,
+    transparent 1px 12.5%
+  );
+  background-repeat: no-repeat;
+  background-size: 100% 5px;
+  background-position: 0 calc(50% + 4px);
+}
+
+/* Values read as instrument output: bracketed by a hairline underline. */
+.ctrl__val {
+  padding: 0 1px 1px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+/* ╔══════════════════════════════════════════════════════════════════════════════╗
+   ║  PANEL LOOK — SINGLE SOURCE OF TRUTH                                         ║
+   ║                                                                              ║
+   ║  Everything that defines how the glass panels look lives in THIS block, and   ║
+   ║  nowhere else. It intentionally sits last in the file so it wins over the      ║
+   ║  earlier build-up layers. Adjust the variables below — nothing else.          ║
+   ╚══════════════════════════════════════════════════════════════════════════════╝ */
+
+/* ── ▼ TUNING ▼ ─────────────────────────────────────────────────────────────────
+   These six values control the entire panel appearance.                          */
+.settings,
+.popmon {
+  /* GLASS */
+  --glass-blur: 5px; /* how frosted: higher = blurrier, lower = clearer          */
+  --glass-dim: 0.42; /* darkens what's BEHIND the glass: LOWER = darker/contrast */
+  --glass-fill: 0.3; /* black film on top: higher = less see-through             */
+
+  /* FRAME — a 45° cut always reads thinner than a straight edge at equal width,
+     so the cuts are deliberately heavier. Perceived weight ≈ width × alpha;
+     current ratio ≈ 2.0 (straight 1×0.80 = 0.80, cut 1.75×0.92 = 1.61).          */
+  --frame: rgba(255, 255, 255, 0.8); /* the 4 straight edges       */
+  --frame-diag: rgba(255, 255, 255, 0.92); /* the 2 diagonal cuts        */
+  --diag-half: 0.875px; /* HALF the cut width (→ 1.75px) */
+}
+/* size of the cut-off corner, per panel */
+.settings {
+  --chamfer: 16px;
+}
+.popmon {
+  --chamfer: 14px;
+}
+/* ── ▲ TUNING ▲ ─────────────────────────────────────────────────────────────── */
+
+/* Panel body: chamfered glass slab. No `border` — a CSS border cannot follow a
+   clip-path, which is why the frame is drawn as background segments further down. */
+.settings,
+.popmon {
+  border: none;
+  box-shadow: none;
+  color: #e6e6e6;
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--chamfer)) 0,
+    100% var(--chamfer),
+    100% 100%,
+    var(--chamfer) 100%,
+    0 calc(100% - var(--chamfer))
+  );
+  /* NEVER add a manual `-webkit-backdrop-filter` next to this. The CSS pipeline prefixes
+     automatically (as it does for user-select); a hand-written -webkit- line is treated as the
+     same logical property, overrides this one, and the STANDARD property gets dropped from the
+     output — which killed the blur in Chrome entirely (Chrome does not support the -webkit- form,
+     only Safari/WebKit does). */
+  backdrop-filter: blur(var(--glass-blur)) saturate(0)
+    brightness(var(--glass-dim));
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.1) 0%,
+      rgba(255, 255, 255, 0.025) 18%,
+      rgba(255, 255, 255, 0) 46%
+    ),
+    rgba(0, 0, 0, var(--glass-fill));
+}
+
+/* Insets. .settings has NO horizontal padding: that pushes the body's scrollbar out
+   to the panel edge instead of letting it float above the controls. */
+.settings {
+  padding: 14px 0;
+}
+.popmon {
+  padding: 14px 16px;
+}
+.settings__head {
+  padding: 0 16px 9px;
+}
+.settings__body {
+  padding: 0 16px;
+}
+.popmon__head {
+  padding-right: 10px; /* clears the top-right cut */
+}
+
+/* Scroll indicator: hairline at the very edge, never over the controls. */
+.settings__body {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+}
+.settings__body::-webkit-scrollbar {
+  width: 3px;
+}
+.settings__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.settings__body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* Corner brackets on the two square corners. */
+.settings::before,
+.popmon::before {
+  inset: 9px;
+  opacity: 1;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7)) 0 0 /
+      10px 1px no-repeat,
+    linear-gradient(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7)) 0 0 /
+      1px 10px no-repeat,
+    linear-gradient(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7)) 100%
+      100% / 10px 1px no-repeat,
+    linear-gradient(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7)) 100%
+      100% / 1px 10px no-repeat;
+}
+
+/* The frame: 4 straight edges + the 2 diagonal cuts, as background segments.
+   Scanlines ride along as the last layer so they stay above the content. */
+.settings::after,
+.popmon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  background:
+    linear-gradient(var(--frame), var(--frame)) left 0 top 0 /
+      calc(100% - var(--chamfer)) 1px no-repeat,
+    linear-gradient(
+        45deg,
+        transparent calc(50% - var(--diag-half)),
+        var(--frame-diag) calc(50% - var(--diag-half)),
+        var(--frame-diag) calc(50% + var(--diag-half)),
+        transparent calc(50% + var(--diag-half))
+      )
+      right 0 top 0 / var(--chamfer) var(--chamfer) no-repeat,
+    linear-gradient(var(--frame), var(--frame)) right 0 top var(--chamfer) / 1px
+      calc(100% - var(--chamfer)) no-repeat,
+    linear-gradient(var(--frame), var(--frame)) right 0 bottom 0 /
+      calc(100% - var(--chamfer)) 1px no-repeat,
+    linear-gradient(
+        45deg,
+        transparent calc(50% - var(--diag-half)),
+        var(--frame-diag) calc(50% - var(--diag-half)),
+        var(--frame-diag) calc(50% + var(--diag-half)),
+        transparent calc(50% + var(--diag-half))
+      )
+      left 0 bottom 0 / var(--chamfer) var(--chamfer) no-repeat,
+    linear-gradient(var(--frame), var(--frame)) left 0 top 0 / 1px
+      calc(100% - var(--chamfer)) no-repeat,
+    repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.03) 0 1px,
+      transparent 1px 3px
+    );
+}
+
+/* Collapsed: hide the title bar's leading tick together with its divider. */
+.settings--closed .settings__head::after {
+  display: none;
+}
+
+/* Species marker: boid silhouette pointing right (direction of travel) + colour glow. */
+.popmon__dot {
+  width: 13px;
+  height: 10px;
+  clip-path: polygon(100% 50%, 0% 0%, 0% 100%);
+  filter: drop-shadow(0 0 3px currentColor) drop-shadow(0 0 7px currentColor);
+}
+.popmon__row {
+  grid-template-columns: 13px 1fr 44px;
 }

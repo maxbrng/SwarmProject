@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BoidsConfig,
   DeathMode,
@@ -139,8 +139,6 @@ export default function ControlPanel({ onChange, sync, open, onToggle }: Props) 
     population: true,
     dynamics: true,
   });
-  const panelRef = useRef<HTMLDivElement>(null);
-  const lastOpenedRef = useRef<Group | null>(null);
 
   // A preset / reset was applied → mirror its Swarm values (sliders, modes, colors) into this panel
   // (the sim is already updated by the parent). Guarded on the nonce so it only runs on apply.
@@ -166,33 +164,12 @@ export default function ControlPanel({ onChange, sync, open, onToggle }: Props) 
   }, [sync?.nonce]);
 
   function toggleSection(g: Group) {
-    setSections((prev) => {
-      const willOpen = !prev[g];
-      if (willOpen) lastOpenedRef.current = g;
-      return { ...prev, [g]: willOpen };
-    });
+    setSections((prev) => ({ ...prev, [g]: !prev[g] }));
   }
-
-  // If an expanded section would push the panel off the bottom of the screen,
-  // collapse the other sections (keeping the one just opened) so it always fits.
-  useLayoutEffect(() => {
-    const el = panelRef.current;
-    if (!el) return;
-    if (el.scrollHeight <= window.innerHeight - 24) return;
-    const keep = lastOpenedRef.current;
-    setSections((prev) => {
-      if (Object.values(prev).filter(Boolean).length <= 1) return prev;
-      const next = { ...prev };
-      let changed = false;
-      (Object.keys(next) as Group[]).forEach((g) => {
-        if (g !== keep && next[g]) {
-          next[g] = false;
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
-    });
-  }, [sections]);
+  // NOTE: an older effect force-collapsed the other sections whenever the panel grew taller than the
+  // viewport. That dates from when this panel was its own fixed, self-scrolling card. It now lives
+  // inside the scrollable `.settings` container, so the guard is unnecessary — and it actively
+  // fought the user by snapping sections shut the moment one was opened. Removed.
 
   function set(key: NumericKey, value: number) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -300,7 +277,7 @@ export default function ControlPanel({ onChange, sync, open, onToggle }: Props) 
   }
 
   return (
-    <div className={`panel ${open ? "" : "panel--closed"}`} ref={panelRef}>
+    <div className={`panel ${open ? "" : "panel--closed"}`}>
       <div className="panel__head">
         <button className="panel__toggle" onClick={onToggle}>
           {open ? "▾" : "▸"} Swarm
