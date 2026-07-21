@@ -330,7 +330,7 @@ function TerrainPanel({ onChange, onClearTerrain, onReseedTerrain, sync, open, o
       {open && (
         <div className="panel__body">
           <div className="swirl__hint">
-            A drifting relief of mountains &amp; valleys drawn as contour lines. The swarm is pushed
+            A relief of mountains &amp; valleys drawn as contour lines. The swarm is pushed
             downhill → it flows through the valleys and can&apos;t cross the peaks. Temporary panel —
             for dialing in the feel.
           </div>

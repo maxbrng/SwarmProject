@@ -270,11 +270,21 @@ fn tryRescue(i : u32, ns : i32) -> Rescue {
   if (hash11(f32(i) * 0.091 + P.time * 11.7 + 2.5) >= chance) { return r; }
   r.hit = true;
   r.sp = sp;
-  // Land as a tight group in the species' own home region — far from the other species' homes
-  // (they sit evenly spread on a circle), so the arrivals aren't eaten the second they appear.
-  r.pos = homeCenter(sp, ns, P.aspect) + radialBlob(f32(i) + P.time * 1.7, RESCUE_SPREAD);
-  let a = hash11(f32(i) * 0.53 + P.time) * 6.2831853;
-  r.vel = vec2f(cos(a), sin(a)) * (P.maxSpeed * 0.6);
+  // Return from beyond the edge of the world: spawn just OUTSIDE the screen, in the direction of the
+  // species' home region, and swim inward. Old behaviour dropped a tight clump at the interior home
+  // center → it popped in, and if a predator happened to sit there the arrivals were eaten on the
+  // spot and re-spawned in a pointless loop. Entering from off-screen (a) matches the story ("returns
+  // from the edges of the world"), (b) spreads arrivals along a border over the seconds they stream
+  // in instead of one clump, and (c) keeps them clear of the predator roaming the field.
+  let th = 6.2831853 * (f32(sp) + 0.25) / f32(ns);
+  let dir = vec2f(cos(th), sin(th));                                    // this species' side of the world
+  let tX = select(1e9, P.aspect / abs(dir.x), abs(dir.x) > 1e-4);
+  let tY = select(1e9, 1.0 / abs(dir.y), abs(dir.y) > 1e-4);
+  let tBorder = min(tX, tY);                                            // distance along dir to the edge
+  let tang = vec2f(-dir.y, dir.x);                                      // along the border
+  let spread = (hash11(f32(i) * 0.77 + P.time * 1.7) - 0.5) * 2.0 * RESCUE_SPREAD;
+  r.pos = dir * (tBorder + 0.15) + tang * spread;                      // just outside, spread along the edge
+  r.vel = -dir * (P.maxSpeed * 0.7);                                    // stream inward, into view
   return r;
 }
 
@@ -318,10 +328,9 @@ const REPRO_RATE  : f32 = 0.08;   // adaptive: base per-frame reproduction chanc
 const HOMING      : f32 = 0.5;    // homeland mode: pull force of boids toward their home region
 const CHAOS_RATE  : f32 = 6.0;    // chaos: encounter-decision windows per second
 const CHAOS_KILL  : f32 = 0.5;    // chaos: chance an in-range encounter results in a kill
-// Refuge: how tightly the re-colonising group lands around its home center. Small enough that the
-// arrivals sit inside each other's perception radius → they form a flock immediately instead of
-// drifting apart as isolated dust that never finds a neighbour (radialBlob is center-weighted).
-const RESCUE_SPREAD : f32 = 0.22;
+// Refuge: how far the re-colonising arrivals are spread ALONG the border they enter from. Wide
+// enough that they don't stream in single-file, tight enough that they meet and flock once inside.
+const RESCUE_SPREAD : f32 = 0.35;
 // Crowd relief (declump): outward pressure per crowding neighbour, and how many neighbours it
 // saturates at. The usable range is small (slider goes 0..0.1) — above that it gets too strong.
 const DECLUMP_PER  : f32 = 0.25;  // pressure (×maxForce) contributed per neighbour in sepDist

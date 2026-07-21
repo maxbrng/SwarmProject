@@ -248,7 +248,7 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   terrainScale: 3.75, // lower = bigger mountains / broader valleys (numerically tuned)
   terrainCoverage: 0.5, // mostly flat plateau + a few isolated, craggy tall peaks (tuned)
   terrainWarp: 0.5, // 0 = current grid-aligned look (dial up for organic, non-grid ridges)
-  terrainDrift: 0.14,
+  terrainDrift: 0, // frozen by default — the terrain is a fixed world, not a drifting one (slider can enable it)
   terrainLineCount: 15,
   terrainLineWidth: 1,
   terrainLineBright: 0.5,
