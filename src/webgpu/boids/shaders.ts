@@ -92,7 +92,13 @@ fn terrainH(p : vec2f, t : f32, s : f32, cov : f32, warp : f32, seed : vec2f) ->
   // so a different seed = a completely different arrangement of the SAME kind of landscape (scale /
   // coverage / warp are unchanged). Must be identical in the compute (avoidance) and render passes,
   // or the swarm would feel a different terrain than the one drawn.
-  var q = p * s + vec2f(t * 0.04, t * 0.02) + seed;
+  // t = time · terrainDrift. The old multiplier (0.04, 0.02) moved a mountain by its own width only
+  // every ~3 min at the default drift → imperceptible while a visitor watches. Raised ~4× so the
+  // Drift slider actually moves the world; the two rates stay different so it drifts diagonally, and
+  // a slow directional wander keeps it from reading as a dead straight camera pan. Same t in both
+  // passes (avoidance + render), so drawn and felt drift together.
+  let dph = t * 0.6;
+  var q = p * s + vec2f(t * 0.15 + sin(dph) * 0.06, t * 0.10 + cos(dph * 0.9) * 0.06) + seed;
   // Optional domain warp (Warp slider): bend the coordinates with another noise field so ridges
   // meander organically instead of sitting on the grid. warp = 0 → byte-identical to the un-warped
   // terrain; dial it up gently for a more natural look. Kept subtle by design.
