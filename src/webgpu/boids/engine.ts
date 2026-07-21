@@ -75,6 +75,12 @@ const STIR_TH = 1.2; // accumulated turn needed to flip direction (~a clear arc)
 const MAX_GRID_X = 128;
 const MAX_GRID_Y = 80;
 const MAX_CELLS = MAX_GRID_X * MAX_GRID_Y; // 10240
+// Emergency-restart watchdog (second line of defence behind the in-shader refuge). Only fires when
+// the ENTIRE ecosystem is effectively empty for a sustained stretch — with the refuge enabled this
+// should never happen, so it exists purely as insurance for an unattended exhibition. Deliberately
+// not a config slider: it must not be tuned into a state where it fires during normal operation.
+const WATCHDOG_ALIVE = 5; // total alive at or below this counts as collapsed
+const WATCHDOG_SECONDS = 6; // how long it must stay collapsed before reseeding
 
 function deathModeNum(m: BoidsConfig["deathMode"]): number {
   return m === "energy" ? 1 : 0;
@@ -727,6 +733,10 @@ export async function createBoidsEngine(
   const COUNT_EVERY = 8;
   let frameNo = 0;
   const speciesCounts: number[] = new Array(MAX_SPECIES).fill(0);
+  // Watchdog bookkeeping. `countsReady` gates it until the first readback has landed — speciesCounts
+  // starts all-zero, and without the gate a fresh start would look like a collapse and reseed itself.
+  let countsReady = false;
+  let collapseTime = 0;
 
   function frame(now: number) {
     if (disposed) return;
@@ -746,6 +756,23 @@ export async function createBoidsEngine(
     }
 
     const count = cfg.count;
+
+    // Emergency restart: the whole ecosystem has been empty long enough that nothing can recover.
+    if (cfg.rescueRestart && countsReady) {
+      let totalAlive = 0;
+      for (let s = 0; s < MAX_SPECIES; s++) totalAlive += speciesCounts[s] ?? 0;
+      if (totalAlive <= WATCHDOG_ALIVE) {
+        collapseTime += dt;
+        if (collapseTime >= WATCHDOG_SECONDS) {
+          reseedNow();
+          collapseTime = 0;
+        }
+      } else {
+        collapseTime = 0;
+      }
+    } else {
+      collapseTime = 0;
+    }
 
     params[0] = dt;
     params[1] = cfg.perception;
@@ -889,6 +916,10 @@ export async function createBoidsEngine(
     params[35] = cfg.terrainDrift;
     params[36] = cfg.terrainCoverage;
     params[37] = cfg.terrainWarp;
+    // refuge: threshold 0 switches the safety net off inside the shader, so the master toggle
+    // needs no separate uniform slot (these two were the struct's padding floats).
+    params[38] = cfg.rescueEnabled ? cfg.rescueThreshold : 0;
+    params[39] = cfg.rescueRate;
     device.queue.writeBuffer(paramsBuffer, 0, params);
 
     // terrain render uniform (must use the SAME scale/drift as the sim so drawn ⇄ felt line up)
@@ -1090,6 +1121,7 @@ export async function createBoidsEngine(
           const arr = Array.from(new Uint32Array(stagingBuffer.getMappedRange().slice(0)));
           stagingBuffer.unmap();
           for (let s = 0; s < MAX_SPECIES; s++) speciesCounts[s] = arr[s] ?? 0;
+          countsReady = true;
           opts.onCounts?.(arr);
         })
         .catch(() => {

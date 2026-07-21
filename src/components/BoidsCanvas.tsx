@@ -31,6 +31,12 @@ export default function BoidsCanvas() {
     (p: PanelId) => setOpenPanel((cur) => (cur === p ? null : p)),
     [],
   );
+  // Stable per-section handlers. Inline arrows would be new function identities on every render,
+  // which would defeat the memo() on the panels — and this component re-renders several times a
+  // second from the FPS and population readouts.
+  const toggleSwarm = useCallback(() => togglePanel("swarm"), [togglePanel]);
+  const toggleTerrain = useCallback(() => togglePanel("terrain"), [togglePanel]);
+  const toggleSwirl = useCallback(() => togglePanel("swirl"), [togglePanel]);
   // Master collapse for the whole settings block → one line when closed. Open on desktop, closed on
   // narrow / touch screens so the art is unobstructed until you tap it.
   const [settingsOpen, setSettingsOpen] = useState(() =>
@@ -170,36 +176,39 @@ export default function BoidsCanvas() {
                 ↻
               </button>
             </div>
-            {settingsOpen && (
-              <div className="settings__body">
-                <ControlPanel
-                  onChange={onChange}
-                  sync={sync}
-                  open={openPanel === "swarm"}
-                  onToggle={() => togglePanel("swarm")}
-                />
-                <TerrainPanel
-                  onChange={onChange}
-                  onClearTerrain={onClearTerrain}
-                  sync={sync}
-                  open={openPanel === "terrain"}
-                  onToggle={() => togglePanel("terrain")}
-                />
-                <SwirlPanel
-                  onChange={onChange}
-                  dir={swirlDir}
-                  sync={sync}
-                  open={openPanel === "swirl"}
-                  onToggle={() => togglePanel("swirl")}
-                />
-                {/* Overarching controls for the WHOLE config, below all three sections. */}
-                <SettingsFooter
-                  getFullConfig={getFullConfig}
-                  applyConfig={applyConfig}
-                  onReseed={onReseed}
-                />
-              </div>
-            )}
+            {/* The body is ALWAYS mounted and only hidden by CSS when collapsed. Unmounting it
+                (the obvious `{settingsOpen && …}`) threw away each panel's local slider state, so
+                reopening the block showed DEFAULT_CONFIG again while the engine kept running with
+                the values you had actually dialled in. Collapsing is a display state, not a data
+                event — the panels must survive it. */}
+            <div className="settings__body">
+              <ControlPanel
+                onChange={onChange}
+                sync={sync}
+                open={openPanel === "swarm"}
+                onToggle={toggleSwarm}
+              />
+              <TerrainPanel
+                onChange={onChange}
+                onClearTerrain={onClearTerrain}
+                sync={sync}
+                open={openPanel === "terrain"}
+                onToggle={toggleTerrain}
+              />
+              <SwirlPanel
+                onChange={onChange}
+                dir={swirlDir}
+                sync={sync}
+                open={openPanel === "swirl"}
+                onToggle={toggleSwirl}
+              />
+              {/* Overarching controls for the WHOLE config, below all three sections. */}
+              <SettingsFooter
+                getFullConfig={getFullConfig}
+                applyConfig={applyConfig}
+                onReseed={onReseed}
+              />
+            </div>
           </div>
           {/* Rendered outside .settings: that card has backdrop-filter, which would trap a
               position:fixed modal inside its bounds. */}

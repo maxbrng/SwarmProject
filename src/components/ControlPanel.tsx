@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import {
   BoidsConfig,
   DeathMode,
@@ -37,6 +37,8 @@ type NumericKey = Exclude<
   | "terrainPeak"
   | "terrainSnow"
   | "terrainTool"
+  | "rescueEnabled"
+  | "rescueRestart"
 >;
 
 // ── color helpers (linear rgb 0..1 ↔ #rrggbb) ──────────────────────────────────
@@ -51,7 +53,7 @@ function hexToRgb(hex: string): RGB {
 }
 const cloneColors = (cs: RGB[]): RGB[] => cs.map((c) => [c[0], c[1], c[2]] as RGB);
 
-type Group = "count" | "swarm" | "population" | "dynamics";
+type Group = "count" | "swarm" | "population" | "dynamics" | "rescue";
 
 const BIRTH_MODES: { value: BirthMode; label: string; title: string }[] = [
   { value: "off", label: "Off", title: "No respawning → species can truly go extinct." },
@@ -120,9 +122,11 @@ const SLIDERS: SliderDef[] = [
     toSlider: (v) => Math.round(1 / v),
     fromSlider: (s) => 1 / Math.max(1, s),
   },
+  { key: "rescueThreshold", label: "Rescue threshold", min: 5, max: 200, step: 5, digits: 0, group: "rescue", title: "Population below which a species counts as critically endangered and gets re-colonised from the refuge. Keep this LOW relative to the total count — it should only engage at the very brink, so populations can still crash and recover dramatically. Too high and every species sticks to this floor, which kills the oscillation.", display: (v) => `${Math.round(v)} boids` },
+  { key: "rescueRate", label: "Rescue speed", min: 1, max: 60, step: 1, digits: 0, group: "rescue", title: "How fast the refuge sends individuals back in, in boids per second. Scaled by how deep the deficit is, so a species at zero recovers fastest and the inflow eases off near the threshold. Low = slow, visible re-colonisation; high = a species snaps back almost instantly.", display: (v) => `${Math.round(v)}/s` },
 ];
 
-export default function ControlPanel({ onChange, sync, open, onToggle }: Props) {
+function ControlPanel({ onChange, sync, open, onToggle }: Props) {
   const [values, setValues] = useState<Record<NumericKey, number>>(() => {
     const v = {} as Record<NumericKey, number>;
     for (const s of SLIDERS) v[s.key] = DEFAULT_CONFIG[s.key];
@@ -133,11 +137,14 @@ export default function ControlPanel({ onChange, sync, open, onToggle }: Props) 
   const [birthMode, setBirthModeState] = useState<BirthMode>(DEFAULT_CONFIG.birthMode);
   const [dominanceMode, setDomState] = useState<DominanceMode>(DEFAULT_CONFIG.dominanceMode);
   const [colors, setColors] = useState<RGB[]>(() => cloneColors(DEFAULT_CONFIG.speciesColors));
+  const [rescueEnabled, setRescueEnabledState] = useState(DEFAULT_CONFIG.rescueEnabled);
+  const [rescueRestart, setRescueRestartState] = useState(DEFAULT_CONFIG.rescueRestart);
   const [sections, setSections] = useState<Record<Group, boolean>>({
     swarm: true,
     count: true,
     population: true,
     dynamics: true,
+    rescue: true,
   });
 
   // A preset / reset was applied → mirror its Swarm values (sliders, modes, colors) into this panel
@@ -159,6 +166,8 @@ export default function ControlPanel({ onChange, sync, open, onToggle }: Props) 
     if (cfg.birthMode) setBirthModeState(cfg.birthMode);
     if (cfg.dominanceMode) setDomState(cfg.dominanceMode);
     if (cfg.speciesColors) setColors(cloneColors(cfg.speciesColors));
+    if (typeof cfg.rescueEnabled === "boolean") setRescueEnabledState(cfg.rescueEnabled);
+    if (typeof cfg.rescueRestart === "boolean") setRescueRestartState(cfg.rescueRestart);
     /* eslint-enable react-hooks/set-state-in-effect */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync?.nonce]);
@@ -194,6 +203,16 @@ export default function ControlPanel({ onChange, sync, open, onToggle }: Props) 
   function setDominanceMode(m: DominanceMode) {
     setDomState(m);
     onChange({ dominanceMode: m });
+  }
+
+  function setRescueEnabled(v: boolean) {
+    setRescueEnabledState(v);
+    onChange({ rescueEnabled: v });
+  }
+
+  function setRescueRestart(v: boolean) {
+    setRescueRestartState(v);
+    onChange({ rescueRestart: v });
   }
 
   function setSpeciesColor(s: number, hex: string) {
@@ -394,9 +413,61 @@ export default function ControlPanel({ onChange, sync, open, onToggle }: Props) 
               </div>
             </>,
           )}
+          {renderSection(
+            "rescue",
+            "Extinction safety",
+            <>
+              <div className="ctrl__label" style={{ marginTop: 2 }}>
+                Refuge (rescue effect)
+              </div>
+              <div className="panel__modes">
+                <button
+                  className={`panel__mode ${rescueEnabled ? "panel__mode--active" : ""}`}
+                  onClick={() => setRescueEnabled(true)}
+                  title="A species that drops below the threshold is re-colonised as a small group in its home region, arriving well-fed so it can immediately reproduce. Makes extinction reversible — the ecosystem runs endlessly."
+                >
+                  On
+                </button>
+                <button
+                  className={`panel__mode ${!rescueEnabled ? "panel__mode--active" : ""}`}
+                  onClick={() => setRescueEnabled(false)}
+                  title="No safety net: a species that hits zero is gone for good, which starves its predator and usually collapses the whole ecosystem within a minute."
+                >
+                  Off
+                </button>
+              </div>
+
+              {rescueEnabled && slidersByKey(["rescueThreshold", "rescueRate"])}
+
+              <div className="ctrl__label" style={{ marginTop: 2 }}>
+                Emergency restart
+              </div>
+              <div className="panel__modes">
+                <button
+                  className={`panel__mode ${rescueRestart ? "panel__mode--active" : ""}`}
+                  onClick={() => setRescueRestart(true)}
+                  title="Last resort: if the entire ecosystem stays empty for several seconds, reseed it automatically. With the refuge on this should never trigger — it is insurance for an unattended exhibition."
+                >
+                  On
+                </button>
+                <button
+                  className={`panel__mode ${!rescueRestart ? "panel__mode--active" : ""}`}
+                  onClick={() => setRescueRestart(false)}
+                  title="Never restart automatically — a fully collapsed ecosystem stays empty until you press Restart."
+                >
+                  Off
+                </button>
+              </div>
+            </>,
+          )}
 
         </div>
       )}
     </div>
   );
 }
+
+// memo: this panel keeps its own slider state and stays MOUNTED while the settings
+// block is collapsed. Its parent re-renders several times a second (FPS + population
+// readouts), and without memo every one of those would reconcile the whole control tree.
+export default memo(ControlPanel);

@@ -53,6 +53,9 @@ const KEYS = [
   "terrainBrushStrength",
   "terrainBrushDetail",
   "terrainHealRate",
+  // refuge / extinction safety net
+  "rescueThreshold",
+  "rescueRate",
 ] as const;
 
 const INT_KEYS = new Set(["count", "numSpecies", "terrainLineCount"]);
@@ -95,6 +98,8 @@ export async function POST(req: Request) {
     ? (body.dominanceMode as string)
     : null;
   const terrainEnabled = typeof body.terrainEnabled === "boolean" ? body.terrainEnabled : null;
+  const rescueEnabled = typeof body.rescueEnabled === "boolean" ? body.rescueEnabled : null;
+  const rescueRestart = typeof body.rescueRestart === "boolean" ? body.rescueRestart : null;
   const terrainTool = ["off", "raise", "lower"].includes(body.terrainTool as string)
     ? (body.terrainTool as string)
     : null;
@@ -183,6 +188,14 @@ export async function POST(req: Request) {
   if (terrainEnabled !== null) {
     const re = /(\n\s*terrainEnabled:\s*)(?:true|false)/;
     if (re.test(block)) block = block.replace(re, `$1${terrainEnabled}`);
+  }
+  if (rescueEnabled !== null) {
+    const re = /(\n\s*rescueEnabled:\s*)(?:true|false)/;
+    if (re.test(block)) block = block.replace(re, `$1${rescueEnabled}`);
+  }
+  if (rescueRestart !== null) {
+    const re = /(\n\s*rescueRestart:\s*)(?:true|false)/;
+    if (re.test(block)) block = block.replace(re, `$1${rescueRestart}`);
   }
   if (terrainTool) {
     const re = /(\n\s*terrainTool:\s*)"(?:off|raise|lower)"/;

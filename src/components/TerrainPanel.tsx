@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { BoidsConfig, DEFAULT_CONFIG, RGB, TerrainTool } from "@/webgpu/boids/config";
 import ColorSwatch from "./ColorSwatch";
 
@@ -217,7 +217,7 @@ function hexToRgb(hex: string): RGB {
  * barrier strength, mountain size/drift, and the contour look — then bake the values into
  * DEFAULT_CONFIG and remove this panel.
  */
-export default function TerrainPanel({ onChange, onClearTerrain, sync, open, onToggle }: Props) {
+function TerrainPanel({ onChange, onClearTerrain, sync, open, onToggle }: Props) {
   const [values, setValues] = useState<Record<TerrainKey, number>>(() => {
     const v = {} as Record<TerrainKey, number>;
     for (const s of ALL_SLIDERS) v[s.key] = DEFAULT_CONFIG[s.key];
@@ -434,3 +434,8 @@ export default function TerrainPanel({ onChange, onClearTerrain, sync, open, onT
     </div>
   );
 }
+
+// memo: this panel keeps its own slider state and stays MOUNTED while the settings
+// block is collapsed. Its parent re-renders several times a second (FPS + population
+// readouts), and without memo every one of those would reconcile the whole control tree.
+export default memo(TerrainPanel);

@@ -28,7 +28,7 @@ struct Params {
   declump : f32, swirlX : f32, swirlY : f32, swirlAmp : f32,
   swirlStrength : f32, swirlRadius : f32, swirlFalloff : f32, swirlInward : f32,
   swirlDir : f32, terrainForce : f32, terrainScale : f32, terrainDrift : f32,
-  terrainCoverage : f32, terrainWarp : f32, _pg2 : f32, _pg3 : f32,
+  terrainCoverage : f32, terrainWarp : f32, rescueThr : f32, rescueRate : f32,
 };
 `;
 
@@ -221,6 +221,50 @@ fn limit(v : vec2f, m : f32) -> vec2f {
   return v;
 }
 
+// ── Refuge / rescue effect (extinction safety net) ───────────────────────────
+// Which species is critically endangered? Returns the SMALLEST population below the threshold, so
+// the neediest one recovers first; -1 = nobody is in danger, or the refuge is off (threshold 0).
+fn rescueTarget(ns : i32, thr : f32) -> i32 {
+  if (thr <= 0.0) { return -1; }
+  var worst = -1;
+  var worstN = thr; // only populations strictly below the threshold qualify
+  for (var s = 0; s < ns; s = s + 1) {
+    let c = popCount(s);
+    if (c < worstN) { worstN = c; worst = s; }
+  }
+  return worst;
+}
+
+struct Rescue { hit : bool, sp : i32, pos : vec2f, vel : vec2f };
+
+// A free slot asks the refuge whether it should be re-colonised this frame. Runs for EVERY birth
+// mode — the refuge is an independent safety layer, not part of the reproduction model.
+fn tryRescue(i : u32, ns : i32) -> Rescue {
+  var r : Rescue;
+  r.hit = false; r.sp = -1; r.pos = vec2f(0.0); r.vel = vec2f(0.0);
+  let sp = rescueTarget(ns, P.rescueThr);
+  if (sp < 0) { return r; }
+  // rescueRate is in boids per SECOND for the whole sim. Every free slot rolls independently, so
+  // the per-slot chance is the budget divided by the number of free slots — that keeps the actual
+  // rate the same whether 50 or 8000 slots happen to be free (otherwise it would swing wildly).
+  var alive = 0.0;
+  for (var s = 0; s < ns; s = s + 1) { alive += popCount(s); }
+  let freeSlots = max(P.count - alive, 1.0);
+  // Deeper deficit ⇒ faster inflow: a species at 0 recovers hard, one just under the threshold
+  // only trickles. Makes the floor feel like pressure, not like a hard clamp.
+  let deficit = clamp((P.rescueThr - popCount(sp)) / max(P.rescueThr, 1.0), 0.0, 1.0);
+  let chance = P.rescueRate * deficit * P.dt / freeSlots;
+  if (hash11(f32(i) * 0.091 + P.time * 11.7 + 2.5) >= chance) { return r; }
+  r.hit = true;
+  r.sp = sp;
+  // Land as a tight group in the species' own home region — far from the other species' homes
+  // (they sit evenly spread on a circle), so the arrivals aren't eaten the second they appear.
+  r.pos = homeCenter(sp, ns, P.aspect) + radialBlob(f32(i) + P.time * 1.7, RESCUE_SPREAD);
+  let a = hash11(f32(i) * 0.53 + P.time) * 6.2831853;
+  r.vel = vec2f(cos(a), sin(a)) * (P.maxSpeed * 0.6);
+  return r;
+}
+
 fn hash11(p : f32) -> f32 { return fract(sin(p * 127.1) * 43758.5453); }
 
 // Robust integer hash (no sin → no f32 precision loss for large boid indices).
@@ -261,6 +305,10 @@ const REPRO_RATE  : f32 = 0.08;   // adaptive: base per-frame reproduction chanc
 const HOMING      : f32 = 0.5;    // homeland mode: pull force of boids toward their home region
 const CHAOS_RATE  : f32 = 6.0;    // chaos: encounter-decision windows per second
 const CHAOS_KILL  : f32 = 0.5;    // chaos: chance an in-range encounter results in a kill
+// Refuge: how tightly the re-colonising group lands around its home center. Small enough that the
+// arrivals sit inside each other's perception radius → they form a flock immediately instead of
+// drifting apart as isolated dust that never finds a neighbour (radialBlob is center-weighted).
+const RESCUE_SPREAD : f32 = 0.22;
 // Crowd relief (declump): outward pressure per crowding neighbour, and how many neighbours it
 // saturates at. The usable range is small (slider goes 0..0.1) — above that it gets too strong.
 const DECLUMP_PER  : f32 = 0.25;  // pressure (×maxForce) contributed per neighbour in sepDist
@@ -286,6 +334,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   // ── Free slot whose birth mode needs NO neighbours (off / constant / homeland) ──
   if (spMe < 0 && bmode != 2) {
     var born = false;
+    var rescued = false;
     if (bmode == 1) {
       // constant: small random trickle, random species at a random spot
       if (hash11(f32(i) * 0.037 + P.time * 3.7 + 5.0) < IMMIGRATION) {
@@ -312,8 +361,15 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         born = true;
       }
     }
-    // bmode == 0 (off): nothing respawns.
-    if (born) { energy = BIRTH_E; flash = 1.0; age = 0.0; }
+    // bmode == 0 (off): nothing respawns — except the refuge below, which is independent.
+    if (!born) {
+      let rc = tryRescue(i, ns);
+      if (rc.hit) { spMe = rc.sp; pos = rc.pos; vel = rc.vel; born = true; rescued = true; }
+    }
+    // Refuge arrivals start FULL, not at BIRTH_E: adaptive reproduction only accepts parents above
+    // REPRO_E, so a group arriving half-starved could never seed the actual recovery — it would
+    // just starve again and the refuge would tread water forever.
+    if (born) { energy = select(BIRTH_E, 1.0, rescued); flash = 1.0; age = 0.0; }
     else { vel = vel * exp(-3.0 * P.dt); pos += vel * P.dt; } // coast, stay invisible
     outB[i].pos = pos; outB[i].vel = vel;
     outB[i].species = f32(spMe); outB[i].energy = energy; outB[i].age = age; outB[i].flash = flash;
@@ -415,6 +471,7 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
   // ── Free-adaptive slot: reborn from the nearest well-fed parent (in-swarm) ───
   if (!isLiving) {
     var born = false;
+    var rescued = false;
     if (nsp >= 0) {
       var total = 0.0;
       for (var s = 0; s < ns; s = s + 1) { total += popCount(s); }
@@ -432,7 +489,14 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
         born = true;
       }
     }
-    if (born) { energy = BIRTH_E; flash = 1.0; age = 0.0; }
+    // The parent-based path above CANNOT recover a species that hit 0 — there is no parent left.
+    // That is exactly the absorbing state the refuge exists for, so it runs whenever no normal
+    // birth happened. Full energy on arrival (see the note in the other free-slot branch).
+    if (!born) {
+      let rc = tryRescue(i, ns);
+      if (rc.hit) { spMe = rc.sp; pos = rc.pos; vel = rc.vel; born = true; rescued = true; }
+    }
+    if (born) { energy = select(BIRTH_E, 1.0, rescued); flash = 1.0; age = 0.0; }
     else { vel = vel * exp(-3.0 * P.dt); pos += vel * P.dt; }
     outB[i].pos = pos; outB[i].vel = vel;
     outB[i].species = f32(spMe); outB[i].energy = energy; outB[i].age = age; outB[i].flash = flash;
