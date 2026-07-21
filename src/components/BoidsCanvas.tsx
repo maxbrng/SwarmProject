@@ -106,6 +106,10 @@ export default function BoidsCanvas() {
     handleRef.current?.clearTerrain();
   }, []);
 
+  const onReseedTerrain = useCallback(() => {
+    handleRef.current?.reseedTerrain();
+  }, []);
+
   // Full live config snapshot (all fields, incl. swirl + terrain) → so "Save as default" and presets
   // capture EVERYTHING, not just the Swarm panel's own sliders.
   const getFullConfig = useCallback(() => handleRef.current?.getConfig() ?? null, []);
@@ -188,6 +192,7 @@ export default function BoidsCanvas() {
               <TerrainPanel
                 onChange={onChange}
                 onClearTerrain={onClearTerrain}
+                onReseedTerrain={onReseedTerrain}
                 sync={sync}
                 open={openPanel === "terrain"}
                 onToggle={toggleTerrain}

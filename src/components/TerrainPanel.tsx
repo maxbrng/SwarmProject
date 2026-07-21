@@ -7,6 +7,7 @@ import ColorSwatch from "./ColorSwatch";
 interface Props {
   onChange: (partial: Partial<BoidsConfig>) => void;
   onClearTerrain: () => void;
+  onReseedTerrain: () => void;
   /** Bumped when a preset is loaded → re-sync the sliders/colors to the loaded config. */
   sync?: { nonce: number; cfg: Partial<BoidsConfig> } | null;
   /** Accordion state — controlled by the parent so only one settings section is open at a time. */
@@ -217,7 +218,7 @@ function hexToRgb(hex: string): RGB {
  * barrier strength, mountain size/drift, and the contour look — then bake the values into
  * DEFAULT_CONFIG and remove this panel.
  */
-function TerrainPanel({ onChange, onClearTerrain, sync, open, onToggle }: Props) {
+function TerrainPanel({ onChange, onClearTerrain, onReseedTerrain, sync, open, onToggle }: Props) {
   const [values, setValues] = useState<Record<TerrainKey, number>>(() => {
     const v = {} as Record<TerrainKey, number>;
     for (const s of ALL_SLIDERS) v[s.key] = DEFAULT_CONFIG[s.key];
@@ -377,6 +378,15 @@ function TerrainPanel({ onChange, onClearTerrain, sync, open, onToggle }: Props)
           </div>
 
           <div className="section__body">
+            {enabled && (
+              <button
+                className="panel__reset"
+                onClick={onReseedTerrain}
+                title="Generate a fresh landscape — a new arrangement of mountains and valleys, same overall character. Also happens automatically on every reload."
+              >
+                New terrain
+              </button>
+            )}
             {TERRAIN_SLIDERS.map(renderSlider)}
 
             <div className="ctrl__label" style={{ marginTop: 2 }}>
