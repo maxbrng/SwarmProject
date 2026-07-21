@@ -136,6 +136,31 @@ export interface BoidsConfig {
   /** How fast the sculpted relief relaxes back toward the base per second (0 = permanent). */
   terrainHealRate: number;
 
+  // ── Stage 2.5: refuge / rescue effect (the extinction safety net) ──────────
+  // Without this the ecosystem is NOT endless: adaptive reproduction needs a living, well-fed
+  // parent nearby, so a species at 0 can never come back — extinction is an absorbing state. And
+  // because cyclic dominance gives every species exactly one prey, one extinction starves the next
+  // species in the ring, which starves the next → total collapse within ~a minute.
+  // The fix mirrors the "rescue effect" from metapopulation ecology (Brown & Kodric-Brown 1977):
+  // local populations do die out in the wild, and are re-colonised from a reservoir outside the
+  // observed patch. Here: a species that drops below `rescueThreshold` gets re-seeded as a small
+  // group in its home region — arriving at FULL energy so it can immediately act as a parent for
+  // the normal adaptive reproduction, which then does the actual recovery.
+  /** Master switch for the refuge. Off = species can go extinct for good (the old behaviour). */
+  rescueEnabled: boolean;
+  /** Population below which a species counts as critically endangered and gets re-colonised.
+   *  Keep this LOW (~20 of 8000): it must only engage at the very brink, so the populations can
+   *  still crash and recover dramatically. Too high and everything sticks to the floor — the
+   *  oscillation, i.e. the whole spectacle, dies. */
+  rescueThreshold: number;
+  /** How fast the refuge sends individuals, in boids per second (scaled by how deep the deficit
+   *  is, so a species at 0 recovers fastest and the flow eases off near the threshold). */
+  rescueRate: number;
+  /** Second line of defence: if the WHOLE ecosystem is empty for a few seconds, restart it.
+   *  With the refuge on this should never fire — it is the insurance for an unattended exhibition,
+   *  not the mechanism. */
+  rescueRestart: boolean;
+
   // ── Stage 2: species / predator-prey ───────────────────────────────────────
   /** Number of species/populations (1 … MAX_SPECIES; 1 = single flock, no predator-prey). */
   numSpecies: number;
@@ -197,7 +222,7 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   count: 8000,
   perception: 0.1,
   separationDist: 0.06,
-  maxSpeed: 0.15,
+  maxSpeed: 0.12,
   maxForce: 2,
   alignWeight: 1,
   cohesionWeight: 0.6,
@@ -220,10 +245,10 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   // terrain (tune live in the TerrainPanel, then bake here)
   terrainEnabled: true,
   terrainForce: 6,
-  terrainScale: 2.45, // lower = bigger mountains / broader valleys (numerically tuned)
-  terrainCoverage: 0.65, // mostly flat plateau + a few isolated, craggy tall peaks (tuned)
+  terrainScale: 3.75, // lower = bigger mountains / broader valleys (numerically tuned)
+  terrainCoverage: 0.5, // mostly flat plateau + a few isolated, craggy tall peaks (tuned)
   terrainWarp: 0.5, // 0 = current grid-aligned look (dial up for organic, non-grid ridges)
-  terrainDrift: 0.06,
+  terrainDrift: 0.14,
   terrainLineCount: 15,
   terrainLineWidth: 1,
   terrainLineBright: 0.5,
@@ -244,6 +269,12 @@ export const DEFAULT_CONFIG: BoidsConfig = {
   terrainBrushStrength: 0.8,
   terrainBrushDetail: 0, // smooth rounded raise/lower by default; raise for craggy mountains
   terrainHealRate: 0.02, // slow self-heal (relief relaxes over ~50 s)
+
+  // refuge / rescue effect — deliberately a low floor, so only true extinction is blocked
+  rescueEnabled: true,
+  rescueThreshold: 25,
+  rescueRate: 12,
+  rescueRestart: true,
 
   numSpecies: 3,
   chaseWeight: 1.2,

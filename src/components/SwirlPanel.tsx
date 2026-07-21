@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { BoidsConfig, DEFAULT_CONFIG } from "@/webgpu/boids/config";
 
 interface Props {
@@ -101,7 +101,7 @@ const SWIRL_SLIDERS: SwirlSlider[] = [
  * Temporary tuning panel for the touch swirl (Stage 1.5). Lets us dial in the vortex feel live;
  * once the final values are found they get baked into DEFAULT_CONFIG and this panel is removed.
  */
-export default function SwirlPanel({ onChange, dir, sync, open, onToggle }: Props) {
+function SwirlPanel({ onChange, dir, sync, open, onToggle }: Props) {
   const [values, setValues] = useState<Record<SwirlKey, number>>(() => {
     const v = {} as Record<SwirlKey, number>;
     for (const s of SWIRL_SLIDERS) v[s.key] = DEFAULT_CONFIG[s.key];
@@ -197,3 +197,8 @@ export default function SwirlPanel({ onChange, dir, sync, open, onToggle }: Prop
     </div>
   );
 }
+
+// memo: this panel keeps its own slider state and stays MOUNTED while the settings
+// block is collapsed. Its parent re-renders several times a second (FPS + population
+// readouts), and without memo every one of those would reconcile the whole control tree.
+export default memo(SwirlPanel);

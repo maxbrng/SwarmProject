@@ -54,6 +54,9 @@ const NUM_KEYS = [
   "terrainBrushStrength",
   "terrainBrushDetail",
   "terrainHealRate",
+  // refuge / extinction safety net
+  "rescueThreshold",
+  "rescueRate",
 ] as const;
 const INT_KEYS = new Set(["count", "numSpecies", "terrainLineCount"]);
 const TERRAIN_COLOR_KEYS = ["terrainValley", "terrainMid", "terrainPeak", "terrainSnow"] as const;
@@ -90,6 +93,8 @@ function sanitizeConfig(input: unknown): Record<string, unknown> {
     }
   }
   if (typeof c.terrainEnabled === "boolean") out.terrainEnabled = c.terrainEnabled;
+  if (typeof c.rescueEnabled === "boolean") out.rescueEnabled = c.rescueEnabled;
+  if (typeof c.rescueRestart === "boolean") out.rescueRestart = c.rescueRestart;
   if (["off", "raise", "lower"].includes(c.terrainTool as string)) out.terrainTool = c.terrainTool;
   for (const k of TERRAIN_COLOR_KEYS) {
     const col = c[k];

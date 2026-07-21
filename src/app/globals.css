@@ -290,6 +290,12 @@ body {
   padding-bottom: 0;
   border-bottom: none;
 }
+/* The body stays MOUNTED when collapsed (so the panels keep the values you dialled in) — hiding it
+   is therefore CSS's job, not React's. display:none also drops it from layout and tab order, so a
+   collapsed block behaves exactly as if it were not rendered. */
+.settings--closed .settings__body {
+  display: none;
+}
 .settings__toggle {
   display: flex;
   align-items: center;

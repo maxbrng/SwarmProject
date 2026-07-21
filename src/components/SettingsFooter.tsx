@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { BoidsConfig, DEFAULT_CONFIG } from "@/webgpu/boids/config";
 import { BUILTIN_PRESETS, type Preset } from "@/webgpu/boids/presets";
 
@@ -23,7 +23,7 @@ const IS_DEV = process.env.NODE_ENV !== "production";
  * WHOLE config (Swarm + Terrain + Swirl), so they live below the whole settings block rather than
  * inside the Swarm section.
  */
-export default function SettingsFooter({ getFullConfig, applyConfig, onReseed }: Props) {
+function SettingsFooter({ getFullConfig, applyConfig, onReseed }: Props) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [pubState, setPubState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [presets, setPresets] = useState<Preset[]>([]);
@@ -297,3 +297,8 @@ export default function SettingsFooter({ getFullConfig, applyConfig, onReseed }:
     </div>
   );
 }
+
+// memo: this panel keeps its own slider state and stays MOUNTED while the settings
+// block is collapsed. Its parent re-renders several times a second (FPS + population
+// readouts), and without memo every one of those would reconcile the whole control tree.
+export default memo(SettingsFooter);
