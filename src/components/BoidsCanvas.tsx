@@ -23,10 +23,9 @@ export default function BoidsCanvas() {
   const [colors, setColors] = useState<RGB[]>(DEFAULT_CONFIG.speciesColors);
   const [swirlDir, setSwirlDir] = useState(DEFAULT_CONFIG.swirlDir >= 0 ? 1 : -1);
   // Accordion: which settings section (Swarm / Terrain / Swirl) is expanded — at most one at a time.
-  // Open Swarm by default on desktop; start fully collapsed on narrow / touch screens (iPad).
-  const [openPanel, setOpenPanel] = useState<PanelId | null>(() =>
-    typeof window === "undefined" ? "swarm" : window.innerWidth > 900 ? "swarm" : null,
-  );
+  // Start with EVERYTHING collapsed (on every screen): the piece must open on the art alone, and the
+  // visitor expands sections one by one if they want to. No section is pre-opened.
+  const [openPanel, setOpenPanel] = useState<PanelId | null>(null);
   const togglePanel = useCallback(
     (p: PanelId) => setOpenPanel((cur) => (cur === p ? null : p)),
     [],
@@ -37,11 +36,9 @@ export default function BoidsCanvas() {
   const toggleSwarm = useCallback(() => togglePanel("swarm"), [togglePanel]);
   const toggleTerrain = useCallback(() => togglePanel("terrain"), [togglePanel]);
   const toggleSwirl = useCallback(() => togglePanel("swirl"), [togglePanel]);
-  // Master collapse for the whole settings block → one line when closed. Open on desktop, closed on
-  // narrow / touch screens so the art is unobstructed until you tap it.
-  const [settingsOpen, setSettingsOpen] = useState(() =>
-    typeof window === "undefined" ? true : window.innerWidth > 900,
-  );
+  // Master collapse for the whole settings block → one line when closed. Start CLOSED on every
+  // screen, so the art is unobstructed until someone taps the top line open.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [help, setHelp] = useState(false); // the guide modal (opened from the ⓘ on the top line)
 
   // Update the swirl overlay imperatively (called every frame from the engine) so it tracks the
