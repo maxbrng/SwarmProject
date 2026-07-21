@@ -14,10 +14,12 @@ struct Boid {
 };
 `;
 
-// Shared Params uniform (36 floats / 144 bytes). Indices 21..23 carry the spatial-grid
+// Shared Params uniform (44 floats / 176 bytes). Indices 21..23 carry the spatial-grid
 // parameters (cell size + grid dims), 24 is the anti-crowd strength, 25..32 the swirl vortex
-// (live center + activation envelope from the pointer, plus its shape + direction). Written by
-// the engine each frame. 36 floats = 9×vec4 → 16-byte aligned; 33..35 pad the struct.
+// (live center + activation envelope from the pointer, plus its shape + direction), 38..39 the
+// refuge, 40..41 the terrain seed offset (a random shift into the noise field → a different
+// landscape without changing its character). Written by the engine each frame. 44 floats =
+// 11×vec4 → 16-byte aligned; 42..43 pad the struct.
 const PARAMS_WGSL = /* wgsl */ `
 struct Params {
   dt : f32, perception : f32, sepDist : f32, maxSpeed : f32, maxForce : f32,
@@ -29,6 +31,7 @@ struct Params {
   swirlStrength : f32, swirlRadius : f32, swirlFalloff : f32, swirlInward : f32,
   swirlDir : f32, terrainForce : f32, terrainScale : f32, terrainDrift : f32,
   terrainCoverage : f32, terrainWarp : f32, rescueThr : f32, rescueRate : f32,
+  terrainSeedX : f32, terrainSeedY : f32, _pg4 : f32, _pg5 : f32,
 };
 `;
 
@@ -84,8 +87,12 @@ fn twarp(p : vec2f) -> f32 {
 // it reads as low land, not a dead bleached blob. The plateau is one **connected** low region
 // (isolated mountains in a sea of flat) → the swarm roams everywhere; only the steep peaks block.
 // Numerically tuned + flood-fill verified (scratchpad/terr4.mjs). Same fn feeds boids + rendering.
-fn terrainH(p : vec2f, t : f32, s : f32, cov : f32, warp : f32) -> f32 {
-  var q = p * s + vec2f(t * 0.04, t * 0.02);
+fn terrainH(p : vec2f, t : f32, s : f32, cov : f32, warp : f32, seed : vec2f) -> f32 {
+  // seed = a large random offset into the noise field. fBm at far-apart regions is uncorrelated,
+  // so a different seed = a completely different arrangement of the SAME kind of landscape (scale /
+  // coverage / warp are unchanged). Must be identical in the compute (avoidance) and render passes,
+  // or the swarm would feel a different terrain than the one drawn.
+  var q = p * s + vec2f(t * 0.04, t * 0.02) + seed;
   // Optional domain warp (Warp slider): bend the coordinates with another noise field so ridges
   // meander organically instead of sitting on the grid. warp = 0 → byte-identical to the un-warped
   // terrain; dial it up gently for a more natural look. Kept subtle by design.
@@ -586,17 +593,18 @@ fn main(@builtin(global_invocation_id) gid : vec3u) {
     let cov = P.terrainCoverage;
     let wp = P.terrainWarp;
     let asp = P.aspect;
+    let tseed = vec2f(P.terrainSeedX, P.terrainSeedY);
     // full height = analytic base + sculpted delta, so the swarm feels painted mountains/valleys too
-    let hR = terrainH(pos + vec2f(e, 0.0), te, s, cov, wp) + sampleDelta(simToUv(pos + vec2f(e, 0.0), asp));
-    let hL = terrainH(pos - vec2f(e, 0.0), te, s, cov, wp) + sampleDelta(simToUv(pos - vec2f(e, 0.0), asp));
-    let hU = terrainH(pos + vec2f(0.0, e), te, s, cov, wp) + sampleDelta(simToUv(pos + vec2f(0.0, e), asp));
-    let hD = terrainH(pos - vec2f(0.0, e), te, s, cov, wp) + sampleDelta(simToUv(pos - vec2f(0.0, e), asp));
+    let hR = terrainH(pos + vec2f(e, 0.0), te, s, cov, wp, tseed) + sampleDelta(simToUv(pos + vec2f(e, 0.0), asp));
+    let hL = terrainH(pos - vec2f(e, 0.0), te, s, cov, wp, tseed) + sampleDelta(simToUv(pos - vec2f(e, 0.0), asp));
+    let hU = terrainH(pos + vec2f(0.0, e), te, s, cov, wp, tseed) + sampleDelta(simToUv(pos + vec2f(0.0, e), asp));
+    let hD = terrainH(pos - vec2f(0.0, e), te, s, cov, wp, tseed) + sampleDelta(simToUv(pos - vec2f(0.0, e), asp));
     let grad = vec2f(hR - hL, hU - hD) / (2.0 * e);
     // Penetration into the mountain, exactly like the screen edge's margin: 0 at the foot of the
     // slope, growing with height. A CUBIC ramp makes the push almost nothing at the foot (smooth,
     // no bounce) and very firm near the top (a hard ceiling nothing crosses) — the same shape that
     // makes the screen-edge repulsion feel natural yet solid. Capped so a sculpted cliff can't fling.
-    let hHere = terrainH(pos, te, s, cov, wp) + sampleDelta(simToUv(pos, asp));
+    let hHere = terrainH(pos, te, s, cov, wp, tseed) + sampleDelta(simToUv(pos, asp));
     let dpt = (hHere - 0.25) / 0.35; // 0 at the slope foot, ~1 mid-slope, >1 near the peak
     let gl = length(grad);
     if (dpt > 0.0 && gl > 1e-4) {
@@ -857,7 +865,7 @@ struct TerrainParams {
   mid    : vec4f, // rgb = mid-slope color; .a = terrainWarp
   peak   : vec4f, // rgb = peak color; .a = hill-shading strength
   snow   : vec4f, // rgb = snow/rock cap color; .a = snow-cap strength
-  misc   : vec4f, // .x = sim units per pixel (for derivative-free contour AA)
+  misc   : vec4f, // .x = sim units per pixel (for derivative-free contour AA); .yz = terrain seed
 };
 @group(0) @binding(0) var<uniform> T : TerrainParams;
 // binding(1) = deltaTex, declared in DELTA_TEX_WGSL (texture, not a fragment storage buffer —
@@ -885,17 +893,18 @@ fn fs(in : VOut) -> @location(0) vec4f {
   let te = T.time * T.drift;
   let cov = T.valley.a; // terrainCoverage packed into the unused valley alpha
   let wp = T.mid.a;     // terrainWarp packed into the unused mid alpha
+  let tseed = vec2f(T.misc.y, T.misc.z); // terrain seed (must match the compute pass)
   // full height = analytic base + sculpted delta (what the swarm feels too). NOT clamped to [0,1]:
   // clamping flattened sculpted peaks/pits into structureless caps (white when raised, blue when
   // lowered). Left unbounded, the dome/bowl keeps its slope → contour lines + shading run right
   // over it. The color ramp + line brightness clamp internally, so oversaturation is graceful.
-  let h = terrainH(sp, te, T.scale, cov, wp) + sampleDelta(in.uv);
+  let h = terrainH(sp, te, T.scale, cov, wp, tseed) + sampleDelta(in.uv);
   // Analytic height gradient (NO screen-space derivatives): dpdx/dpdy/fwidth returned per-tile
   // garbage on some Linux Vulkan / ANGLE drivers → rectangular block artifacts in the terrain.
   // Sampling the full height (base + delta) at small offsets is fully driver-independent.
   let ge = 0.014;
-  let hgx = (terrainH(sp + vec2f(ge, 0.0), te, T.scale, cov, wp) + sampleDelta(simToUv(sp + vec2f(ge, 0.0), T.aspect))) - h;
-  let hgy = (terrainH(sp + vec2f(0.0, ge), te, T.scale, cov, wp) + sampleDelta(simToUv(sp + vec2f(0.0, ge), T.aspect))) - h;
+  let hgx = (terrainH(sp + vec2f(ge, 0.0), te, T.scale, cov, wp, tseed) + sampleDelta(simToUv(sp + vec2f(ge, 0.0), T.aspect))) - h;
+  let hgy = (terrainH(sp + vec2f(0.0, ge), te, T.scale, cov, wp, tseed) + sampleDelta(simToUv(sp + vec2f(0.0, ge), T.aspect))) - h;
   let gradSim = vec2f(hgx, hgy) / ge; // d(height)/d(sim units)
 
   // hypsometric elevation fill: valley → mid → peak, so the height reads by COLOR (not just the

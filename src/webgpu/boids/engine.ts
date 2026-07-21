@@ -38,6 +38,8 @@ export interface BoidsHandle {
   reseed: () => void;
   /** Erase all sculpted terrain (reset the delta buffer to 0). */
   clearTerrain: () => void;
+  /** Roll a new random terrain seed → a different landscape arrangement (same character). */
+  reseedTerrain: () => void;
   /** Snapshot of the full live config (all fields, incl. swirl + terrain) — for presets / defaults. */
   getConfig: () => BoidsConfig;
 }
@@ -57,7 +59,7 @@ export interface EngineOptions {
 }
 
 const TRAIL_FORMAT: GPUTextureFormat = "rgba8unorm";
-const PARAMS_FLOATS = 40; // compute uniform (160 bytes; 33..36 = terrain force/scale/drift/coverage)
+const PARAMS_FLOATS = 44; // compute uniform (176 bytes; 38..39 = refuge, 40..41 = terrain seed)
 const FLOATS_PER_BOID = 8; // pos.xy, vel.xy, species, energy, age, flash
 // Cap the render resolution. Touch devices (the iPad) get a lower cap: a Retina panel at dpr 2
 // renders ~4× the pixels, and the terrain fragment (multi-octave fbm + gradient samples per pixel)
@@ -266,6 +268,13 @@ export async function createBoidsEngine(
   const cellZeros = new Uint32Array(MAX_CELLS); // to clear cellCount each frame
 
   let ping = 0; // ping-pong index (also reset by reseedNow)
+
+  // Terrain seed: a random offset into the noise field, so the landscape ARRANGEMENT differs every
+  // load (and on demand via reseedTerrain) while its character — set by scale/coverage/warp — stays.
+  // A wide range keeps successive seeds well apart in the noise domain → visibly different maps.
+  // NOT part of cfg: it is runtime state (like the ecosystem seed), never saved into presets.
+  let terrainSeedX = Math.random() * 1000 - 500;
+  let terrainSeedY = Math.random() * 1000 - 500;
 
   // rebuild the ecosystem (both ping-pong buffers, starting from buffer 0)
   function reseedNow() {
@@ -920,6 +929,8 @@ export async function createBoidsEngine(
     // needs no separate uniform slot (these two were the struct's padding floats).
     params[38] = cfg.rescueEnabled ? cfg.rescueThreshold : 0;
     params[39] = cfg.rescueRate;
+    params[40] = terrainSeedX;
+    params[41] = terrainSeedY;
     device.queue.writeBuffer(paramsBuffer, 0, params);
 
     // terrain render uniform (must use the SAME scale/drift as the sim so drawn ⇄ felt line up)
@@ -951,6 +962,8 @@ export async function createBoidsEngine(
     // misc.x = sim units per pixel (sim y spans 2 over the full canvas height) → used for the
     // derivative-free contour line width. Guard against a 0 height before the first resize.
     terrainParams[24] = 2 / Math.max(1, canvas.height);
+    terrainParams[25] = terrainSeedX; // misc.y — must match params[40] in the compute pass
+    terrainParams[26] = terrainSeedY; // misc.z — must match params[41]
     device.queue.writeBuffer(terrainParamsBuffer, 0, terrainParams);
 
     // brush uniform for the sculpt pass (heal always runs; the brush adds only while held)
@@ -1159,6 +1172,12 @@ export async function createBoidsEngine(
     },
     clearTerrain() {
       device.queue.writeBuffer(deltaBuffer, 0, deltaZeros);
+    },
+    reseedTerrain() {
+      // New random offset into the noise field. Applied instantly; the next frame's compute + render
+      // both read it (params[40/41] and terrainParams[25/26]), so drawn and felt stay in lockstep.
+      terrainSeedX = Math.random() * 1000 - 500;
+      terrainSeedY = Math.random() * 1000 - 500;
     },
     getConfig() {
       return structuredClone(cfg);
