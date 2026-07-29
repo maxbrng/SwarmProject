@@ -9,13 +9,17 @@ procedural landscape. Visitors can disturb the system, but never permanently con
 
 `WebGPU` · `WGSL` · `TypeScript` · `Next.js` · `Multi-touch`
 
+## Project Video
+
+[![Watch the project video](https://img.youtube.com/vi/bPigw6eilWA/maxresdefault.jpg)](https://youtu.be/bPigw6eilWA)
+
 </div>
 
 ---
 
 ## About
 
-**What We Cannot Destroy** is an interactive digital artwork built around an artificial ecosystem.
+**What We Cannot Destroy** is an interactive digital artwork built around an artificial ecosystem, created as part of the **Art+Code** course at **TU Dresden**.
 Its creatures follow local flocking rules while three species pursue one another in a continuous
 predator–prey cycle. Energy, reproduction, death, terrain, and population recovery turn these simple
 behaviours into an unpredictable living system.
