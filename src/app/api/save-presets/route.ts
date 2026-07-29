@@ -126,28 +126,37 @@ export async function POST(req: Request) {
   }
 
   // validate + sanitize each preset; dedupe by name (last wins), keep insertion order
-  const byName = new Map<string, { name: string; config: Record<string, unknown> }>();
+  type CleanPreset = {
+    name: string;
+    description?: string;
+    variant?: boolean;
+    config: Record<string, unknown>;
+  };
+  const byName = new Map<string, CleanPreset>();
   for (const p of body.presets as unknown[]) {
     const rec = (p ?? {}) as Record<string, unknown>;
     const name = typeof rec.name === "string" ? rec.name.trim() : "";
     if (!name) continue;
-    byName.set(name, { name, config: sanitizeConfig(rec.config) });
+    const out: CleanPreset = { name, config: sanitizeConfig(rec.config) };
+    if (typeof rec.description === "string" && rec.description.trim()) {
+      out.description = rec.description.trim();
+    }
+    if (rec.variant === true) out.variant = true;
+    byName.set(name, out);
   }
   const cleaned = Array.from(byName.values());
 
   const file =
-    `// Built-in presets shipped WITH the app (baked into code → available in every production build,\n` +
-    `// on every device). This is the single source of truth for shipped presets.\n` +
-    `//\n` +
-    `// In development you edit presets in the ControlPanel and click "Publish presets to code", which\n` +
-    `// overwrites this file via /api/save-presets (dev-only). Commit it → the presets ship globally.\n` +
-    `// In production the panel shows these read-only (no create/rename/overwrite/delete).\n` +
-    `//\n` +
-    `// AUTO-GENERATED region: the BUILTIN_PRESETS array below is rewritten by the publish route.\n` +
+    `// Presets shipped with the app, baked into code so every build on every device has them.\n` +
+    `// In dev you edit them in the panel and click "Publish presets to code", which overwrites this\n` +
+    `// file via /api/save-presets. In production the panel shows them read-only.\n` +
     `import { BoidsConfig } from "./config";\n\n` +
-    `/** A named, saved configuration (a subset of BoidsConfig). */\n` +
     `export interface Preset {\n` +
     `  name: string;\n` +
+    `  // One-line explanation shown under the name.\n` +
+    `  description?: string;\n` +
+    `  // Marks a variation of the preset above it, shown indented.\n` +
+    `  variant?: boolean;\n` +
     `  config: Partial<BoidsConfig>;\n` +
     `}\n\n` +
     `export const BUILTIN_PRESETS: Preset[] = ${JSON.stringify(cleaned, null, 2)};\n`;

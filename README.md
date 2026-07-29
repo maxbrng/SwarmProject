@@ -1,36 +1,110 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+<div align="center">
 
-## Getting Started
+# What We Cannot Destroy
 
-First, run the development server:
+### An interactive artificial ecosystem shaped by touch
+
+Thousands of autonomous creatures form swarms, hunt, reproduce, disappear, and return inside a
+procedural landscape. Visitors can disturb the system, but never permanently control it.
+
+`WebGPU` · `WGSL` · `TypeScript` · `Next.js` · `Multi-touch`
+
+</div>
+
+---
+
+## About
+
+**What We Cannot Destroy** is an interactive digital artwork built around an artificial ecosystem.
+Its creatures follow local flocking rules while three species pursue one another in a continuous
+predator–prey cycle. Energy, reproduction, death, terrain, and population recovery turn these simple
+behaviours into an unpredictable living system.
+
+Every intervention is temporary. The swarms reorganise, the landscape slowly returns to its original
+form, and even an extinct species can be reintroduced by the system. The work asks whether this
+guaranteed recovery represents resilience—or creates the dangerous impression that destruction has
+no lasting consequences.
+
+## Interaction
+
+- **One finger:** Move and stir a local vortex. A circular gesture determines its direction.
+- **Two fingers:** Raise the terrain and create a mountain that repels the creatures.
+- **Three or more fingers:** Lower the terrain and open a valley through which the swarms can move.
+
+The size of a terrain intervention follows the distance between the fingers. After release, the
+sculpted landscape gradually heals.
+
+## How it works
+
+The simulation runs directly on the GPU. Each creature stores only its position, velocity, species,
+energy, age, and a short visual flash state. Every frame, WebGPU compute shaders:
+
+1. update the editable terrain,
+2. organise creatures in a spatial grid,
+3. calculate flocking, hunting, energy, birth, death, and recovery,
+4. render the terrain, creatures, glow, and motion trails.
+
+Ping-pong buffers keep parallel state updates deterministic, while the spatial grid avoids comparing
+every creature with every other creature. The default scene contains 8,000 creatures, with GPU
+buffers prepared for up to 20,000.
+
+## Technology
+
+- Next.js 16 and React 19
+- TypeScript
+- WebGPU
+- WGSL compute and render shaders
+- GPU-based spatial neighbour search
+- Procedural terrain with an editable height field
+- Pointer Events for multi-touch interaction
+
+WebGPU support and a secure browser context are required. An up-to-date Chrome or Edge browser is
+recommended on desktop.
+
+## Run locally
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+For testing on another device over the local network, WebGPU requires HTTPS:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev:https
+```
 
-## Learn More
+To create and run a production build:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npm run build
+npm run start
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```text
+src/
+├── app/                 Next.js application shell
+├── components/          Interface, controls, and population monitor
+├── lib/viewMode.ts      Full dev panel vs. curated exhibition panel
+└── webgpu/boids/
+    ├── engine.ts        Orchestrator: GPU resources, frame loop, public handle
+    ├── config.ts        Types and default parameters
+    ├── presets.ts       Built-in ecosystem configurations
+    ├── layout.ts        Uniform-struct field offsets (kept in sync with the WGSL)
+    ├── pipelines.ts     Bind-group layouts and compute/render pipelines
+    ├── input.ts         Multi-touch pointer tracking
+    ├── modes.ts         Config enums → shader numbers, predator-prey matrix
+    ├── seeding.ts       Initial boid placement
+    ├── shaders.ts       Composes the WGSL programs from shaders/*.wgsl
+    └── shaders/         The WGSL compute and render source files
+```
 
-## Deploy on Vercel
+## Acknowledgements
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The flocking behaviour was informed by Craig Reynolds’ Boids model and the public
+[`roholazandie/boids`](https://github.com/roholazandie/boids) Python/p5 implementation, which served
+as a practical reference for the first prototype.

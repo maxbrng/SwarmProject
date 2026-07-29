@@ -3,7 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-// ── color math (hex ↔ rgb 0..1 ↔ hsv 0..1) ────────────────────────────────────
+// color math: hex ↔ rgb 0..1 ↔ hsv 0..1
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -45,11 +45,11 @@ function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
 }
 
 interface Props {
-  /** current color as #rrggbb */
+  // current color as #rrggbb
   value: string;
-  /** called with a new #rrggbb while editing */
+  // called with a new #rrggbb while editing
   onChange: (hex: string) => void;
-  /** short label under the swatch (e.g. "S1") */
+  // short label under the swatch (e.g. "S1")
   label: string;
   title?: string;
 }
@@ -57,7 +57,7 @@ interface Props {
 const POP_W = 188;
 const POP_H = 208;
 
-/** A round color swatch that opens a small modern HSV picker popover. */
+// A round color swatch that opens a small HSV picker popover.
 export default function ColorSwatch({ value, onChange, label, title }: Props) {
   const [open, setOpen] = useState(false);
   const [hsv, setHsv] = useState<[number, number, number]>(() => {

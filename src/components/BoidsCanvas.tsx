@@ -9,41 +9,74 @@ import SwirlPanel from "./SwirlPanel";
 import TerrainPanel from "./TerrainPanel";
 import SettingsFooter from "./SettingsFooter";
 import HelpModal from "./HelpModal";
+import { IS_DEV } from "@/lib/viewMode";
 
 type PanelId = "swarm" | "terrain" | "swirl";
+type TouchTool = BoidsConfig["terrainTool"]; // "off" (swirl) | "raise" | "lower"
+
+// What a single finger does — for single-touch screens without the multi-finger gestures.
+const TOUCH_TOOLS: { tool: TouchTool; label: string; icon: React.ReactNode }[] = [
+  {
+    tool: "off",
+    label: "Touch draws a swirl",
+    icon: (
+      <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8 8 a2 2 0 1 1 2 -2 a4 4 0 1 1 -4 4 a6 6 0 1 1 6 -6" />
+      </svg>
+    ),
+  },
+  {
+    tool: "raise",
+    label: "Touch raises a mountain",
+    icon: (
+      <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M1.5 13 L6 5 L9 9.5 L11 6.5 L14.5 13" />
+      </svg>
+    ),
+  },
+  {
+    tool: "lower",
+    label: "Touch digs a valley",
+    icon: (
+      <svg viewBox="0 0 16 16" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M1.5 4 L6 12 L9 7.5 L11 10.5 L14.5 4" />
+      </svg>
+    ),
+  },
+];
 
 export default function BoidsCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const handleRef = useRef<BoidsHandle | null>(null);
-  const swirlFxRef = useRef<HTMLDivElement>(null); // soft glow overlay (follows the finger)
+  const swirlFxRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [fps, setFps] = useState(0);
   const [counts, setCounts] = useState<number[]>([]);
   const [numSpecies, setNumSpecies] = useState(DEFAULT_CONFIG.numSpecies);
   const [colors, setColors] = useState<RGB[]>(DEFAULT_CONFIG.speciesColors);
   const [swirlDir, setSwirlDir] = useState(DEFAULT_CONFIG.swirlDir >= 0 ? 1 : -1);
-  // Accordion: which settings section (Swarm / Terrain / Swirl) is expanded — at most one at a time.
-  // Start with EVERYTHING collapsed (on every screen): the piece must open on the art alone, and the
-  // visitor expands sections one by one if they want to. No section is pre-opened.
+
+  // Which settings section is open (at most one). Everything starts collapsed so the art opens alone.
   const [openPanel, setOpenPanel] = useState<PanelId | null>(null);
   const togglePanel = useCallback(
     (p: PanelId) => setOpenPanel((cur) => (cur === p ? null : p)),
     [],
   );
-  // Stable per-section handlers. Inline arrows would be new function identities on every render,
-  // which would defeat the memo() on the panels — and this component re-renders several times a
-  // second from the FPS and population readouts.
+  // Stable handlers so the memo()'d panels don't re-render on every FPS/count update.
   const toggleSwarm = useCallback(() => togglePanel("swarm"), [togglePanel]);
   const toggleTerrain = useCallback(() => togglePanel("terrain"), [togglePanel]);
   const toggleSwirl = useCallback(() => togglePanel("swirl"), [togglePanel]);
-  // Master collapse for the whole settings block → one line when closed. Start CLOSED on every
-  // screen, so the art is unobstructed until someone taps the top line open.
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [help, setHelp] = useState(false); // the guide modal (opened from the ⓘ on the top line)
 
-  // Update the swirl overlay imperatively (called every frame from the engine) so it tracks the
-  // finger at 60 fps without triggering a React re-render. Kept deliberately subtle: just a soft
-  // glow that fades in/out with the amp envelope, matching the additive particle look.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [touchTool, setTouchTool] = useState<TouchTool>(DEFAULT_CONFIG.terrainTool);
+  const [showTouchBar, setShowTouchBar] = useState(false);
+  const setTouch = useCallback((tool: TouchTool) => {
+    setTouchTool(tool);
+    handleRef.current?.update({ terrainTool: tool });
+  }, []);
+
+  // Move the swirl glow imperatively every frame so it tracks the finger without a React re-render.
   const onSwirl = useCallback((s: { cx: number; cy: number; r: number; amp: number }) => {
     const el = swirlFxRef.current;
     if (!el) return;
@@ -59,7 +92,6 @@ export default function BoidsCanvas() {
     el.style.height = `${s.r * 2}px`;
   }, []);
 
-  // Keep the panel button in sync when a stir gesture flips the direction.
   const onSwirlDir = useCallback((dir: number) => {
     setSwirlDir(dir >= 0 ? 1 : -1);
   }, []);
@@ -96,6 +128,7 @@ export default function BoidsCanvas() {
     if (partial.numSpecies !== undefined) setNumSpecies(Math.round(partial.numSpecies));
     if (partial.speciesColors) setColors(partial.speciesColors);
     if (partial.swirlDir !== undefined) setSwirlDir(partial.swirlDir >= 0 ? 1 : -1);
+    if (partial.terrainTool) setTouchTool(partial.terrainTool);
   }, []);
 
   const onReseed = useCallback(() => {
@@ -110,18 +143,15 @@ export default function BoidsCanvas() {
     handleRef.current?.reseedTerrain();
   }, []);
 
-  // Full live config snapshot (all fields, incl. swirl + terrain) → so "Save as default" and presets
-  // capture EVERYTHING, not just the Swarm panel's own sliders.
+  // Full live config (incl. swirl + terrain) so presets and "Save as default" capture everything.
   const getFullConfig = useCallback(() => handleRef.current?.getConfig() ?? null, []);
 
-  // When a preset is loaded, ControlPanel pushes the full config to the engine; this nonce lets the
-  // Terrain and Swirl panels re-sync their displayed sliders to the loaded values.
+  // Bumped on preset load so every panel re-syncs its sliders to the loaded values.
   const [sync, setSync] = useState<{ nonce: number; cfg: Partial<BoidsConfig> } | null>(null);
   const onConfigApplied = useCallback(
     (cfg: Partial<BoidsConfig>) => setSync((s) => ({ nonce: (s?.nonce ?? 0) + 1, cfg })),
     [],
   );
-  // Apply a whole config (preset load / reset): push to the sim AND re-sync every panel's sliders.
   const applyConfig = useCallback(
     (cfg: Partial<BoidsConfig>) => {
       onChange(cfg);
@@ -133,8 +163,6 @@ export default function BoidsCanvas() {
   return (
     <>
       <canvas ref={canvasRef} className="swarm-canvas" />
-      {/* Subtle swirl feedback: a soft radial glow that follows the finger and fades with the amp
-          envelope. No hard edge, no motion of its own — the boids show the actual swirl. */}
       <div ref={swirlFxRef} className="swirl-fx" aria-hidden="true">
         <span className="swirl-fx__glow" />
       </div>
@@ -142,14 +170,8 @@ export default function BoidsCanvas() {
         <div className="swarm-error">{error}</div>
       ) : (
         <>
-          {/* Populations stays pinned on its own, top-right — it's a live readout, not a setting. */}
           <PopulationMonitor counts={counts} numSpecies={numSpecies} colors={colors} />
-          {/* ONE settings card. A master line collapses the whole thing to a single row; open, it
-              reveals the Swarm / Terrain / Swirl sections (accordion — one at a time), each of which
-              has its own sub-sections. The card is the single scroller (height-capped in CSS). */}
           <div className={`settings ${settingsOpen ? "" : "settings--closed"}`}>
-            {/* Top line, always visible: the master collapse toggle + the always-on controls
-                (guide, live FPS, restart). These stay reachable even when everything is collapsed. */}
             <div className="settings__head">
               <button
                 className="settings__toggle"
@@ -169,6 +191,18 @@ export default function BoidsCanvas() {
               </button>
               <span className="panel__fps">{fps > 0 ? `${Math.round(fps)} FPS` : "…"}</span>
               <button
+                className={`panel__restart ${showTouchBar ? "panel__restart--on" : ""}`}
+                onClick={() => setShowTouchBar((v) => !v)}
+                title="Show or hide the touch controls"
+                aria-label="Toggle touch controls"
+                aria-pressed={showTouchBar}
+              >
+                <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4">
+                  <circle cx="8" cy="8" r="5.5" />
+                  <circle cx="8" cy="8" r="1.8" fill="currentColor" stroke="none" />
+                </svg>
+              </button>
+              <button
                 className="panel__restart"
                 onClick={onReseed}
                 title="Restart ecosystem"
@@ -177,43 +211,62 @@ export default function BoidsCanvas() {
                 ↻
               </button>
             </div>
-            {/* The body is ALWAYS mounted and only hidden by CSS when collapsed. Unmounting it
-                (the obvious `{settingsOpen && …}`) threw away each panel's local slider state, so
-                reopening the block showed DEFAULT_CONFIG again while the engine kept running with
-                the values you had actually dialled in. Collapsing is a display state, not a data
-                event — the panels must survive it. */}
+            {showTouchBar && (
+              <div className="settings__touchbar">
+                <span className="touchrow__label">Touch</span>
+                <div className="touchtools" role="group" aria-label="Touch mode">
+                  {TOUCH_TOOLS.map((t) => (
+                    <button
+                      key={t.tool}
+                      className={`touchtool ${touchTool === t.tool ? "touchtool--active" : ""}`}
+                      onClick={() => setTouch(t.tool)}
+                      aria-label={t.label}
+                      aria-pressed={touchTool === t.tool}
+                    >
+                      {t.icon}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="settings__body">
-              <ControlPanel
-                onChange={onChange}
-                sync={sync}
-                open={openPanel === "swarm"}
-                onToggle={toggleSwarm}
-              />
-              <TerrainPanel
-                onChange={onChange}
-                onClearTerrain={onClearTerrain}
-                onReseedTerrain={onReseedTerrain}
-                sync={sync}
-                open={openPanel === "terrain"}
-                onToggle={toggleTerrain}
-              />
-              <SwirlPanel
-                onChange={onChange}
-                dir={swirlDir}
-                sync={sync}
-                open={openPanel === "swirl"}
-                onToggle={toggleSwirl}
-              />
-              {/* Overarching controls for the WHOLE config, below all three sections. */}
-              <SettingsFooter
-                getFullConfig={getFullConfig}
-                applyConfig={applyConfig}
-                onReseed={onReseed}
-              />
+              <div className="settings__scroll">
+                <ControlPanel
+                  onChange={onChange}
+                  sync={sync}
+                  open={openPanel === "swarm"}
+                  onToggle={toggleSwarm}
+                />
+                {IS_DEV && (
+                  <>
+                    <TerrainPanel
+                      onChange={onChange}
+                      onClearTerrain={onClearTerrain}
+                      onReseedTerrain={onReseedTerrain}
+                      sync={sync}
+                      open={openPanel === "terrain"}
+                      onToggle={toggleTerrain}
+                    />
+                    <SwirlPanel
+                      onChange={onChange}
+                      dir={swirlDir}
+                      sync={sync}
+                      open={openPanel === "swirl"}
+                      onToggle={toggleSwirl}
+                    />
+                  </>
+                )}
+              </div>
+              <div className="settings__foot">
+                <SettingsFooter
+                  getFullConfig={getFullConfig}
+                  applyConfig={applyConfig}
+                  onReseed={onReseed}
+                  onReseedTerrain={onReseedTerrain}
+                />
+              </div>
             </div>
           </div>
-          {/* Rendered outside .settings: that card has backdrop-filter, which would trap a
-              position:fixed modal inside its bounds. */}
           {help && <HelpModal onClose={() => setHelp(false)} />}
         </>
       )}

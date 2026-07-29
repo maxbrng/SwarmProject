@@ -1,9 +1,6 @@
 "use client";
 
-/**
- * In-app user guide. Keep this in sync whenever features change — it is the
- * explanation the user reads via the ⓘ button next to "Swarm".
- */
+// In-app user guide, opened via the ⓘ button next to "Swarm". Keep it in sync when features change.
 export default function HelpModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="help" onClick={onClose}>

@@ -23,20 +23,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    // suppressHydrationWarning: browser extensions (theme/color-scheme managers, e.g. ones
-    // that add data-theme / color-scheme / a "chakra-ui-*" class) mutate <html>/<body> before
-    // React hydrates. That's harmless but triggers a hydration mismatch warning — suppressing
-    // it on these two elements is the official Next.js fix. Only affects their own attributes.
+    // suppressHydrationWarning: browser extensions mutate <html>/<body> before React hydrates, which
+    // would trigger a harmless hydration-mismatch warning. Suppressing it here is the Next.js fix.
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable}`}
       suppressHydrationWarning
     >
       <body suppressHydrationWarning>
-        {/* Boot-time error catcher: runs before the React bundle, paints ANY JS error or failed
-            chunk load onto the screen. Without this a WebKit-only failure (e.g. iPad) that crashes
-            before React mounts just shows a black screen with no clue. Temporary diagnostic. */}
         <script
+          data-role="boot-error-catcher"
           dangerouslySetInnerHTML={{
             __html: `(function(){
   function show(msg){

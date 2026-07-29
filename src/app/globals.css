@@ -58,8 +58,8 @@ body {
   border-radius: 50%;
   background: radial-gradient(
     circle,
-    rgba(255, 255, 255, 0.16) 0%,
-    rgba(255, 255, 255, 0.05) 45%,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.03) 45%,
     rgba(255, 255, 255, 0) 72%
   );
 }
@@ -352,13 +352,9 @@ body {
   padding-top: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.14);
 }
-/* Overarching footer (presets / save / reset), set off from the sections by a stronger divider. */
 .settings__footer {
   display: flex;
   flex-direction: column;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.22);
 }
 /* Bigger, comfier tap targets on touch screens (the exhibition panel) — no effect with a mouse. */
 @media (pointer: coarse) {
@@ -460,9 +456,7 @@ body {
 
 /* ── Presets ──────────────────────────────────────────────────────────────── */
 .presets {
-  margin-top: 8px;
-  border-top: 1px solid rgba(255, 255, 255, 0.14);
-  padding-top: 8px;
+  margin-top: 0;
 }
 
 .presets__head {
@@ -630,6 +624,9 @@ body {
 
 /* Small restart button in the panel header (visible even when the panel is collapsed) */
 .panel__restart {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 0;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background: rgba(255, 255, 255, 0.16);
@@ -637,7 +634,7 @@ body {
   width: 26px;
   height: 22px;
   padding: 0;
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
 }
@@ -1239,6 +1236,10 @@ body {
   font-weight: 400;
   letter-spacing: 0.04em;
 }
+.settings .panel__toggle--plain::before {
+  content: none;
+  counter-increment: none;
+}
 
 /* Sliders get a measurement scale under the track. */
 .ctrl__slider {
@@ -1427,4 +1428,195 @@ body {
 }
 .popmon__row {
   grid-template-columns: 13px 1fr 44px;
+}
+
+/* ── Touch-mode switcher: icon-only swirl / raise / lower, in a fixed second header row ── */
+.settings__touchbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+.settings--closed .settings__touchbar {
+  border-bottom: none;
+  padding-bottom: 2px;
+}
+.touchrow__label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+}
+.touchtools {
+  display: flex;
+  gap: 6px;
+}
+.touchtool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 34px;
+  padding: 0;
+  border-radius: 0;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.06);
+  color: #cfcfcf;
+  cursor: pointer;
+}
+.touchtool:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+.touchtool--active {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
+}
+.touchtool svg {
+  display: block;
+}
+
+/* ── Presets: name + one-line description, so a visitor knows what each one does ── */
+.presets__load {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+.presets__name {
+  font-size: 12px;
+  color: #e8e8e8;
+}
+.presets__desc {
+  font-size: 10px;
+  line-height: 1.35;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.presets__load:hover .presets__desc {
+  color: rgba(255, 255, 255, 0.72);
+}
+.presets__input--desc {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* ── Three-region settings layout: fixed header, scrolling sections, fixed footer ── */
+.settings__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin-top: 0;
+  padding: 0;
+}
+.settings__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 16px;
+  counter-reset: sect;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+}
+.settings__scroll::-webkit-scrollbar {
+  width: 3px;
+}
+.settings__scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.settings__scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.35);
+}
+/* Pinned bottom: touch switch + presets + actions. Scrolls internally only if it gets too tall. */
+.settings__foot {
+  flex: 0 0 auto;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 10px 16px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  scrollbar-width: thin;
+}
+
+/* Variations of the default (Three Species): indented + a connecting rail so they read as
+   belonging to the preset above them. */
+.presets__row--variant {
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+/* Row action buttons (rename / overwrite / delete, dev only) sit at the top, small — never
+   stretched to the full height of a tall description. */
+.presets__row {
+  align-items: flex-start;
+}
+.presets__act,
+.presets__del {
+  height: 26px;
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+/* Clear divider between the preset list and the Restart / New terrain / Reset actions. */
+.footer__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Collapsed preset picker: one line showing the current choice; click to expand the full list. */
+.presets__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 0;
+  background: none;
+  border: none;
+  color: #d6d6d6;
+  cursor: pointer;
+  text-align: left;
+}
+.presets__toggleArrow {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+}
+.presets__toggleLabel {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+.presets__toggleName {
+  margin-left: auto;
+  color: #ffffff;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.presets__load--active {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Header toggle for the touch bar: filled when the bar is shown. */
+.panel__restart--on {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: #000000;
+}
+.panel__restart svg {
+  display: block;
 }

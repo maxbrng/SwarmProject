@@ -3,10 +3,10 @@
 import { SPECIES_PALETTE, type RGB } from "@/webgpu/boids/config";
 
 interface Props {
-  /** Alive boids per species (index = species). */
+  // Alive boids per species (index = species).
   counts: number[];
   numSpecies: number;
-  /** Live per-species colors (linear rgb 0..1) — falls back to the palette. */
+  // Live per-species colors (linear rgb 0..1), falls back to the palette.
   colors?: RGB[];
 }
 
@@ -34,8 +34,6 @@ export default function PopulationMonitor({ counts, numSpecies, colors }: Props)
           const pct = (v / max) * 100;
           return (
             <div className="popmon__row" key={s}>
-              {/* color is set as well as background so the CSS glow (drop-shadow currentColor)
-                  picks up the species colour */}
               <span className="popmon__dot" style={{ background: col, color: col }} />
               <div className="popmon__track">
                 <div className="popmon__fill" style={{ width: `${pct}%`, background: col }} />

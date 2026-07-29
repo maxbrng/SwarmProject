@@ -5,11 +5,11 @@ import { BoidsConfig, DEFAULT_CONFIG } from "@/webgpu/boids/config";
 
 interface Props {
   onChange: (partial: Partial<BoidsConfig>) => void;
-  /** Current rotation direction (±1). Controlled by the parent so the stir gesture keeps it synced. */
+  // Rotation direction (±1), controlled by the parent so the stir gesture stays synced.
   dir: number;
-  /** Bumped when a preset is loaded → re-sync the sliders to the loaded config. */
+  // Bumped when a preset is loaded, to re-sync the sliders.
   sync?: { nonce: number; cfg: Partial<BoidsConfig> } | null;
-  /** Accordion state — controlled by the parent so only one settings section is open at a time. */
+  // Only one settings section is open at a time, so the parent controls this.
   open: boolean;
   onToggle: () => void;
 }
@@ -97,10 +97,7 @@ const SWIRL_SLIDERS: SwirlSlider[] = [
   },
 ];
 
-/**
- * Temporary tuning panel for the touch swirl (Stage 1.5). Lets us dial in the vortex feel live;
- * once the final values are found they get baked into DEFAULT_CONFIG and this panel is removed.
- */
+// Live tuning panel for the touch swirl. Dev-only; final values get baked into DEFAULT_CONFIG.
 function SwirlPanel({ onChange, dir, sync, open, onToggle }: Props) {
   const [values, setValues] = useState<Record<SwirlKey, number>>(() => {
     const v = {} as Record<SwirlKey, number>;
@@ -108,12 +105,11 @@ function SwirlPanel({ onChange, dir, sync, open, onToggle }: Props) {
     return v;
   });
 
-  // A preset was loaded → mirror its swirl values into the sliders (the sim is already updated by
-  // the parent's onChange; the direction syncs via the controlled `dir` prop).
+  // A preset was loaded: mirror its swirl values into the sliders.
   useEffect(() => {
     const cfg = sync?.cfg;
     if (!cfg) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional: mirror the loaded preset into local UI state
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setValues((prev) => {
       const next = { ...prev };
       for (const s of SWIRL_SLIDERS) {
@@ -198,7 +194,6 @@ function SwirlPanel({ onChange, dir, sync, open, onToggle }: Props) {
   );
 }
 
-// memo: this panel keeps its own slider state and stays MOUNTED while the settings
-// block is collapsed. Its parent re-renders several times a second (FPS + population
-// readouts), and without memo every one of those would reconcile the whole control tree.
+// memo: the parent re-renders several times a second (FPS + population readouts). This panel keeps
+// its own state while staying mounted, so without memo every tick would reconcile the whole tree.
 export default memo(SwirlPanel);
