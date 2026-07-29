@@ -3,49 +3,45 @@
 import { memo, useEffect, useState } from "react";
 import { BoidsConfig, DEFAULT_CONFIG } from "@/webgpu/boids/config";
 import { BUILTIN_PRESETS, type Preset } from "@/webgpu/boids/presets";
+import { IS_DEV } from "@/lib/viewMode";
 
 interface Props {
-  /** Full live config snapshot (all sections) — what presets / defaults save. */
+  // Full live config snapshot (all sections), what presets and defaults save.
   getFullConfig: () => BoidsConfig | null;
-  /** Apply a config to the running sim AND re-sync every panel's sliders (preset load / reset). */
+  // Apply a config to the running sim and re-sync every panel's sliders (preset load / reset).
   applyConfig: (cfg: Partial<BoidsConfig>) => void;
-  /** Restart the ecosystem. */
+  // Restart the ecosystem.
   onReseed: () => void;
+  // Roll a new random terrain (a different landscape).
+  onReseedTerrain: () => void;
 }
 
 // Presets ship baked into code (BUILTIN_PRESETS) so they're identical in every production build.
-// In dev they're an editable localStorage working copy; "Publish presets to code" bakes them in.
-const PRESETS_KEY = "swarm-presets-v1"; // dev-only working copy
-const IS_DEV = process.env.NODE_ENV !== "production";
-
-/**
- * Overarching settings footer: presets + "Save as default" + Restart + Reset. These act on the
- * WHOLE config (Swarm + Terrain + Swirl), so they live below the whole settings block rather than
- * inside the Swarm section.
- */
-function SettingsFooter({ getFullConfig, applyConfig, onReseed }: Props) {
+// In dev you can edit the in-memory list and "Publish presets to code" bakes it into presets.ts.
+// These act on the whole config (swarm + terrain + swirl), so they sit below the settings block.
+function SettingsFooter({ getFullConfig, applyConfig, onReseed, onReseedTerrain }: Props) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [pubState, setPubState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [presets, setPresets] = useState<Preset[]>([]);
   const [presetName, setPresetName] = useState("");
+  const [presetDesc, setPresetDesc] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [presetMsg, setPresetMsg] = useState("");
+  // Collapsed preset picker: show only the current selection; expand to choose another.
+  const [listOpen, setListOpen] = useState(false);
+  const [selected, setSelected] = useState<string | null>(BUILTIN_PRESETS[0]?.name ?? null);
 
-  // Seed the preset list once on mount (production: read-only from code; dev: localStorage copy).
+  function pickPreset(p: Preset) {
+    applyConfig(p.config);
+    setSelected(p.name);
+    setListOpen(false);
+  }
+
+  // Seed the preset list from code once on mount. In dev, edits live in memory until published.
   useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- intentional: seed the preset list once on mount */
-    if (!IS_DEV) {
-      setPresets(BUILTIN_PRESETS);
-      return;
-    }
-    try {
-      const raw = localStorage.getItem(PRESETS_KEY);
-      setPresets(raw ? JSON.parse(raw) : BUILTIN_PRESETS);
-    } catch {
-      setPresets(BUILTIN_PRESETS);
-    }
-    /* eslint-enable react-hooks/set-state-in-effect */
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPresets(BUILTIN_PRESETS);
   }, []);
 
   function currentConfig(): Partial<BoidsConfig> {
@@ -76,13 +72,8 @@ function SettingsFooter({ getFullConfig, applyConfig, onReseed }: Props) {
   }[saveState];
 
   function persistPresets(next: Preset[]) {
+    // In-memory only; "Publish presets to code" is the persistence path (writes presets.ts).
     setPresets(next);
-    if (!IS_DEV) return;
-    try {
-      localStorage.setItem(PRESETS_KEY, JSON.stringify(next));
-    } catch {
-      /* ignore */
-    }
   }
 
   async function publishPresets() {
@@ -117,21 +108,23 @@ function SettingsFooter({ getFullConfig, applyConfig, onReseed }: Props) {
   function saveCurrentAsPreset() {
     const name = presetName.trim();
     if (!name) return;
+    const desc = presetDesc.trim();
     const idx = presets.findIndex((p) => p.name === name);
     if (idx >= 0 && !window.confirm(`A preset “${name}” already exists — overwrite it?`)) return;
     const cfg = currentConfig();
-    const next =
-      idx >= 0
-        ? presets.map((p, i) => (i === idx ? { name, config: cfg } : p))
-        : [...presets, { name, config: cfg }];
+    const entry: Preset = desc ? { name, description: desc, config: cfg } : { name, config: cfg };
+    const next = idx >= 0 ? presets.map((p, i) => (i === idx ? entry : p)) : [...presets, entry];
     persistPresets(next);
     setPresetName("");
+    setPresetDesc("");
     flashMsg(idx >= 0 ? `✓ “${name}” overwritten` : `✓ Saved preset “${name}”`);
   }
 
   function overwritePreset(name: string) {
     if (!window.confirm(`Overwrite preset “${name}” with the current settings?`)) return;
-    persistPresets(presets.map((p) => (p.name === name ? { name, config: currentConfig() } : p)));
+    persistPresets(
+      presets.map((p) => (p.name === name ? { ...p, config: currentConfig() } : p)),
+    );
     flashMsg(`✓ “${name}” updated with current settings`);
   }
 
@@ -160,9 +153,18 @@ function SettingsFooter({ getFullConfig, applyConfig, onReseed }: Props) {
 
   return (
     <div className="settings__footer">
-      {/* Presets act on the whole config (Swarm + Terrain + Swirl). */}
       <div className="presets">
-        <div className="presets__head">Presets</div>
+        <button
+          className="presets__toggle"
+          onClick={() => setListOpen((o) => !o)}
+          title="Choose a preset"
+        >
+          <span className="presets__toggleArrow">{listOpen ? "▾" : "▸"}</span>
+          <span className="presets__toggleLabel">Preset</span>
+          <span className="presets__toggleName">{selected ?? "choose…"}</span>
+        </button>
+        {listOpen && (
+          <>
         {IS_DEV && (
           <div className="presets__save">
             <input
@@ -184,6 +186,18 @@ function SettingsFooter({ getFullConfig, applyConfig, onReseed }: Props) {
               Save
             </button>
           </div>
+        )}
+        {IS_DEV && (
+          <input
+            className="presets__input presets__input--desc"
+            type="text"
+            placeholder="Description (shown to visitors)…"
+            value={presetDesc}
+            onChange={(e) => setPresetDesc(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") saveCurrentAsPreset();
+            }}
+          />
         )}
         {presets.length > 0 ? (
           <div className="presets__list">
@@ -218,13 +232,19 @@ function SettingsFooter({ getFullConfig, applyConfig, onReseed }: Props) {
                   </button>
                 </div>
               ) : (
-                <div className="presets__row" key={p.name}>
+                <div
+                  className={`presets__row ${p.variant ? "presets__row--variant" : ""}`}
+                  key={p.name}
+                >
                   <button
-                    className="presets__load"
-                    onClick={() => applyConfig(p.config)}
-                    title="Load this preset"
+                    className={`presets__load ${selected === p.name ? "presets__load--active" : ""}`}
+                    onClick={() => pickPreset(p)}
+                    title={p.description ?? "Load this preset"}
                   >
-                    {p.name}
+                    <span className="presets__name">{p.name}</span>
+                    {p.description && (
+                      <span className="presets__desc">{p.description}</span>
+                    )}
                   </button>
                   {IS_DEV && (
                     <>
@@ -272,33 +292,45 @@ function SettingsFooter({ getFullConfig, applyConfig, onReseed }: Props) {
           </button>
         )}
         {presetMsg && <div className="presets__msg">{presetMsg}</div>}
+          </>
+        )}
       </div>
 
-      {IS_DEV && (
-        <button
-          className={`panel__save panel__save--${saveState}`}
-          onClick={saveAsDefault}
-          disabled={saveState === "saving"}
-          title="Writes ALL current values (Swarm + Terrain + Swirl) into config.ts (DEFAULT_CONFIG) — survives reload. Dev only."
-        >
-          {saveLabel}
+      <div className="footer__actions">
+        {IS_DEV && (
+          <button
+            className={`panel__save panel__save--${saveState}`}
+            onClick={saveAsDefault}
+            disabled={saveState === "saving"}
+            title="Writes ALL current values (Swarm + Terrain + Swirl) into config.ts (DEFAULT_CONFIG) — survives reload. Dev only."
+          >
+            {saveLabel}
+          </button>
+        )}
+        <button className="panel__reset" onClick={onReseed} title="Restart the ecosystem with the current settings.">
+          ↻ Restart
         </button>
-      )}
-      <button className="panel__reset" onClick={onReseed}>
-        ↻ Restart
-      </button>
-      <button
-        className="panel__reset"
-        onClick={() => applyConfig(DEFAULT_CONFIG)}
-        title="Reset every setting (Swarm + Terrain + Swirl) to the built-in defaults."
-      >
-        Reset all values
-      </button>
+        <button
+          className="panel__reset"
+          onClick={onReseedTerrain}
+          title="Generate a fresh random landscape."
+        >
+          New terrain
+        </button>
+        {IS_DEV && (
+          <button
+            className="panel__reset"
+            onClick={() => applyConfig(DEFAULT_CONFIG)}
+            title="Reset every setting (Swarm + Terrain + Swirl) to the built-in defaults."
+          >
+            Reset all values
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-// memo: this panel keeps its own slider state and stays MOUNTED while the settings
-// block is collapsed. Its parent re-renders several times a second (FPS + population
-// readouts), and without memo every one of those would reconcile the whole control tree.
+// memo: the parent re-renders several times a second (FPS + population readouts). This panel keeps
+// its own state while staying mounted, so without memo every tick would reconcile the whole tree.
 export default memo(SettingsFooter);

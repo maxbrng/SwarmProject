@@ -13,12 +13,13 @@ import {
   MAX_SPECIES,
 } from "@/webgpu/boids/config";
 import ColorSwatch from "./ColorSwatch";
+import { IS_DEV } from "@/lib/viewMode";
 
 interface Props {
   onChange: (partial: Partial<BoidsConfig>) => void;
-  /** Bumped when a preset / reset is applied → re-sync this panel's sliders, modes and colors. */
+  // Bumped when a preset or reset is applied, to re-sync this panel's sliders, modes and colors.
   sync?: { nonce: number; cfg: Partial<BoidsConfig> } | null;
-  /** Accordion state — controlled by the parent so only one settings section is open at a time. */
+  // Only one settings section is open at a time, so the parent controls this.
   open: boolean;
   onToggle: () => void;
 }
@@ -41,7 +42,7 @@ type NumericKey = Exclude<
   | "rescueRestart"
 >;
 
-// ── color helpers (linear rgb 0..1 ↔ #rrggbb) ──────────────────────────────────
+// color helpers: linear rgb 0..1 ↔ #rrggbb
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 function rgbToHex(c: RGB): string {
   const h = (x: number) => Math.round(clamp01(x) * 255).toString(16).padStart(2, "0");
@@ -79,11 +80,10 @@ interface SliderDef {
   digits: number;
   group: Group;
   title: string;
-  /** Optional human-readable value display (overrides the raw number). */
+  // Optional human-readable value display (overrides the raw number).
   display?: (v: number) => string;
-  /** Optional transform config→slider position (for sliders in different units). */
+  // Optional transforms for sliders whose units differ from the stored config value.
   toSlider?: (configValue: number) => number;
-  /** Optional transform slider position→config value. */
   fromSlider?: (sliderValue: number) => number;
 }
 
@@ -147,38 +147,35 @@ function ControlPanel({ onChange, sync, open, onToggle }: Props) {
     rescue: true,
   });
 
-  // A preset / reset was applied → mirror its Swarm values (sliders, modes, colors) into this panel
-  // (the sim is already updated by the parent). Guarded on the nonce so it only runs on apply.
+  // A preset or reset was applied: mirror its Swarm values (sliders, modes, colors) into this panel.
+  // Guarded on the nonce so it only runs on apply; the sim is already updated by the parent.
   useEffect(() => {
     const cfg = sync?.cfg;
     if (!cfg) return;
-    /* eslint-disable react-hooks/set-state-in-effect -- intentional: mirror the loaded preset into local UI state */
-    setValues((prev) => {
-      const nv = { ...prev };
-      for (const s of SLIDERS) {
-        const v = cfg[s.key];
-        if (typeof v === "number") nv[s.key] = v;
-      }
-      return nv;
-    });
-    if (cfg.deathMode) setMode(cfg.deathMode);
-    if (cfg.seedMode) setSeedModeState(cfg.seedMode);
-    if (cfg.birthMode) setBirthModeState(cfg.birthMode);
-    if (cfg.dominanceMode) setDomState(cfg.dominanceMode);
-    if (cfg.speciesColors) setColors(cloneColors(cfg.speciesColors));
-    if (typeof cfg.rescueEnabled === "boolean") setRescueEnabledState(cfg.rescueEnabled);
-    if (typeof cfg.rescueRestart === "boolean") setRescueRestartState(cfg.rescueRestart);
-    /* eslint-enable react-hooks/set-state-in-effect */
+    const mirror = () => {
+      setValues((prev) => {
+        const nv = { ...prev };
+        for (const s of SLIDERS) {
+          const v = cfg[s.key];
+          if (typeof v === "number") nv[s.key] = v;
+        }
+        return nv;
+      });
+      if (cfg.deathMode) setMode(cfg.deathMode);
+      if (cfg.seedMode) setSeedModeState(cfg.seedMode);
+      if (cfg.birthMode) setBirthModeState(cfg.birthMode);
+      if (cfg.dominanceMode) setDomState(cfg.dominanceMode);
+      if (cfg.speciesColors) setColors(cloneColors(cfg.speciesColors));
+      if (typeof cfg.rescueEnabled === "boolean") setRescueEnabledState(cfg.rescueEnabled);
+      if (typeof cfg.rescueRestart === "boolean") setRescueRestartState(cfg.rescueRestart);
+    };
+    mirror();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync?.nonce]);
 
   function toggleSection(g: Group) {
     setSections((prev) => ({ ...prev, [g]: !prev[g] }));
   }
-  // NOTE: an older effect force-collapsed the other sections whenever the panel grew taller than the
-  // viewport. That dates from when this panel was its own fixed, self-scrolling card. It now lives
-  // inside the scrollable `.settings` container, so the guard is unnecessary — and it actively
-  // fought the user by snapping sections shut the moment one was opened. Removed.
 
   function set(key: NumericKey, value: number) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -295,6 +292,72 @@ function ControlPanel({ onChange, sync, open, onToggle }: Props) {
     );
   }
 
+  // Exhibition build: a curated set of safe controls under one collapsible "Swarm Settings" header.
+  if (!IS_DEV) {
+    return (
+      <div className={`panel ${open ? "" : "panel--closed"}`}>
+        <div className="panel__head">
+          <button className="panel__toggle panel__toggle--plain" onClick={onToggle}>
+            {open ? "▾" : "▸"} Swarm Settings
+          </button>
+        </div>
+        {open && (
+        <div className="panel__body">
+          <div className="section__body">
+            {slidersByKey(["count", "numSpecies", "starveRate"])}
+            {colorPickers}
+            <div className="ctrl__label" style={{ marginTop: 2 }}>
+              Dominance (who eats whom)
+            </div>
+            <div className="panel__modes3">
+              <button
+                className={`panel__mode ${dominanceMode === "cyclic" ? "panel__mode--active" : ""}`}
+                onClick={() => setDominanceMode("cyclic")}
+                title="Fixed rock–paper–scissors: A eats B eats C … eats A. Always balanced."
+              >
+                Cyclic
+              </button>
+              <button
+                className={`panel__mode ${dominanceMode === "random" ? "panel__mode--active" : ""}`}
+                onClick={() => setDominanceMode("random")}
+                title="Fixed random matchups — who beats whom is decided once, re-rolled on Restart."
+              >
+                Random
+              </button>
+              <button
+                className={`panel__mode ${dominanceMode === "chaos" ? "panel__mode--active" : ""}`}
+                onClick={() => setDominanceMode("chaos")}
+                title="No fixed predator or prey — every encounter is decided by chance."
+              >
+                Chaos
+              </button>
+            </div>
+            <div className="ctrl__label" style={{ marginTop: 2 }}>
+              Extinction safety
+            </div>
+            <div className="panel__modes">
+              <button
+                className={`panel__mode ${rescueEnabled ? "panel__mode--active" : ""}`}
+                onClick={() => setRescueEnabled(true)}
+                title="A species that drops to the brink is re-colonised from the refuge — the ecosystem runs endlessly."
+              >
+                On
+              </button>
+              <button
+                className={`panel__mode ${!rescueEnabled ? "panel__mode--active" : ""}`}
+                onClick={() => setRescueEnabled(false)}
+                title="No safety net: a species that hits zero is gone for good."
+              >
+                Off
+              </button>
+            </div>
+          </div>
+        </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={`panel ${open ? "" : "panel--closed"}`}>
       <div className="panel__head">
@@ -305,6 +368,12 @@ function ControlPanel({ onChange, sync, open, onToggle }: Props) {
 
       {open && (
         <div className="panel__body">
+          {!IS_DEV ? (
+            <div className="section__body">
+              {slidersByKey(["count", "numSpecies"])}
+            </div>
+          ) : (
+            <>
           {renderSection("swarm", "Swarm behavior", slidersOf("swarm"))}
           {renderSection("count", "Count", slidersOf("count"))}
           {renderSection(
@@ -460,14 +529,14 @@ function ControlPanel({ onChange, sync, open, onToggle }: Props) {
               </div>
             </>,
           )}
-
+            </>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// memo: this panel keeps its own slider state and stays MOUNTED while the settings
-// block is collapsed. Its parent re-renders several times a second (FPS + population
-// readouts), and without memo every one of those would reconcile the whole control tree.
+// memo: the parent re-renders several times a second (FPS + population readouts). This panel keeps
+// its own state while staying mounted, so without memo every tick would reconcile the whole tree.
 export default memo(ControlPanel);

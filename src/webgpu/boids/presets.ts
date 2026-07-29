@@ -1,242 +1,197 @@
-// Built-in presets shipped WITH the app (baked into code → available in every production build,
-// on every device). This is the single source of truth for shipped presets.
-//
-// In development you edit presets in the ControlPanel and click "Publish presets to code", which
-// overwrites this file via /api/save-presets (dev-only). Commit it → the presets ship globally.
-// In production the panel shows these read-only (no create/rename/overwrite/delete).
-//
-// AUTO-GENERATED region: the BUILTIN_PRESETS array below is rewritten by the publish route.
+// Presets shipped with the app, baked into code so every build on every device has them.
+// In dev you edit them in the panel and click "Publish presets to code", which overwrites this
+// file via /api/save-presets. In production the panel shows them read-only.
 import { BoidsConfig } from "./config";
 
-/** A named, saved configuration (a subset of BoidsConfig). */
 export interface Preset {
   name: string;
+  // One-line explanation shown under the name.
+  description?: string;
+  // Marks a variation of the preset above it, shown indented.
+  variant?: boolean;
   config: Partial<BoidsConfig>;
 }
 
+const PALETTE: [number, number, number][] = [
+  [0.25, 0.65, 1],
+  [1, 0.45, 0.35],
+  [0.55, 1, 0.5],
+  [1, 0.85, 0.3],
+  [0.8, 0.5, 1],
+  [1, 0.5, 0.85],
+];
+
 export const BUILTIN_PRESETS: Preset[] = [
   {
-    "name": "Balanced Trio",
-    "config": {
-      "count": 8000,
-      "perception": 0.1,
-      "separationDist": 0.06,
-      "maxSpeed": 0.15,
-      "maxForce": 2,
-      "alignWeight": 1,
-      "cohesionWeight": 0.6,
-      "separationWeight": 2,
-      "boidScale": 0.007,
-      "trailFade": 0.17,
-      "colorIntensity": 0.8,
-      "declump": 0,
-      "numSpecies": 3,
-      "chaseWeight": 1.2,
-      "fleeWeight": 1.1,
-      "killRadius": 0.025,
-      "birthRate": 1,
-      "adaptiveStrength": 1,
-      "starveRate": 0.05,
-      "deathMode": "energy",
-      "seedMode": "clustered",
-      "birthMode": "adaptive",
-      "dominanceMode": "cyclic",
-      "speciesColors": [
-        [
-          0.25,
-          0.65,
-          1
-        ],
-        [
-          1,
-          0.45,
-          0.35
-        ],
-        [
-          0.55,
-          1,
-          0.5
-        ],
-        [
-          1,
-          0.85,
-          0.3
-        ],
-        [
-          0.8,
-          0.5,
-          1
-        ],
-        [
-          1,
-          0.5,
-          0.85
-        ]
-      ]
-    }
+    name: "Three Species",
+    description: "The default — three species in a balanced hunting circle.",
+    config: {
+      count: 8000,
+      perception: 0.1,
+      separationDist: 0.06,
+      maxSpeed: 0.15,
+      maxForce: 2,
+      alignWeight: 1,
+      cohesionWeight: 0.6,
+      separationWeight: 2,
+      boidScale: 0.007,
+      trailFade: 0.17,
+      colorIntensity: 0.8,
+      declump: 0,
+      numSpecies: 3,
+      chaseWeight: 1.2,
+      fleeWeight: 1.1,
+      killRadius: 0.025,
+      birthRate: 1,
+      adaptiveStrength: 1,
+      starveRate: 0.05,
+      deathMode: "energy",
+      seedMode: "clustered",
+      birthMode: "adaptive",
+      dominanceMode: "cyclic",
+      rescueEnabled: true,
+      rescueThreshold: 25,
+      rescueRate: 12,
+      rescueRestart: true,
+      speciesColors: PALETTE,
+    },
   },
   {
-    "name": "6 Full Chaos",
-    "config": {
-      "count": 20000,
-      "perception": 0.1,
-      "separationDist": 0.06,
-      "maxSpeed": 0.1,
-      "maxForce": 2,
-      "alignWeight": 1,
-      "cohesionWeight": 0.6,
-      "separationWeight": 2,
-      "boidScale": 0.007,
-      "trailFade": 0.45,
-      "colorIntensity": 0.9,
-      "declump": 0.025,
-      "numSpecies": 6,
-      "chaseWeight": 1.2,
-      "fleeWeight": 1.1,
-      "killRadius": 0.025,
-      "birthRate": 1,
-      "adaptiveStrength": 2,
-      "starveRate": 0.05,
-      "deathMode": "energy",
-      "seedMode": "clustered",
-      "birthMode": "adaptive",
-      "dominanceMode": "chaos",
-      "speciesColors": [
-        [
-          0.25,
-          0.65,
-          1
-        ],
-        [
-          1,
-          0.45,
-          0.35
-        ],
-        [
-          0.55,
-          1,
-          0.5
-        ],
-        [
-          1,
-          0.85,
-          0.3
-        ],
-        [
-          0.8,
-          0.5,
-          1
-        ],
-        [
-          1,
-          0.5,
-          0.85
-        ]
-      ]
-    }
+    name: "Dense Swarm",
+    description: "Packed dense, with long flowing trails.",
+    variant: true,
+    config: {
+      count: 16000,
+      perception: 0.1,
+      separationDist: 0.06,
+      maxSpeed: 0.13,
+      maxForce: 2,
+      alignWeight: 1,
+      cohesionWeight: 0.7,
+      separationWeight: 2,
+      boidScale: 0.006,
+      trailFade: 0.09,
+      colorIntensity: 0.75,
+      declump: 0.02,
+      numSpecies: 3,
+      chaseWeight: 1.2,
+      fleeWeight: 1.1,
+      killRadius: 0.025,
+      birthRate: 1,
+      adaptiveStrength: 1,
+      starveRate: 0.05,
+      deathMode: "energy",
+      seedMode: "clustered",
+      birthMode: "adaptive",
+      dominanceMode: "cyclic",
+      rescueEnabled: true,
+      rescueThreshold: 25,
+      rescueRate: 12,
+      rescueRestart: true,
+      speciesColors: PALETTE,
+    },
   },
   {
-    "name": "Single Swarm",
-    "config": {
-      "count": 10000,
-      "perception": 0.1,
-      "separationDist": 0.06,
-      "maxSpeed": 0.15,
-      "maxForce": 2,
-      "alignWeight": 1,
-      "cohesionWeight": 0.6,
-      "separationWeight": 2,
-      "boidScale": 0.007,
-      "trailFade": 0.17,
-      "colorIntensity": 0.8,
-      "declump": 0,
-      "numSpecies": 1,
-      "chaseWeight": 1.2,
-      "fleeWeight": 1.1,
-      "killRadius": 0.025,
-      "birthRate": 1,
-      "adaptiveStrength": 1,
-      "starveRate": 0.05,
-      "swirlStrength": 2.5,
-      "swirlRadius": 0.4,
-      "swirlFalloff": 1.6,
-      "swirlInward": 0,
-      "swirlDir": 1,
-      "swirlRampUp": 0.12,
-      "swirlRampDown": 0.5,
-      "terrainForce": 6,
-      "terrainScale": 2.45,
-      "terrainCoverage": 0.65,
-      "terrainWarp": 0.5,
-      "terrainDrift": 0.06,
-      "terrainLineCount": 15,
-      "terrainLineWidth": 1,
-      "terrainLineBright": 0.5,
-      "terrainTint": 1,
-      "terrainShade": 0.8,
-      "terrainSnowAmount": 0.85,
-      "terrainBrushSize": 0.22,
-      "terrainBrushStrength": 0.8,
-      "terrainBrushDetail": 0,
-      "terrainHealRate": 0.02,
-      "deathMode": "convert",
-      "seedMode": "clustered",
-      "birthMode": "off",
-      "dominanceMode": "cyclic",
-      "speciesColors": [
-        [
-          1,
-          1,
-          1
-        ],
-        [
-          1,
-          0.45,
-          0.35
-        ],
-        [
-          0.55,
-          1,
-          0.5
-        ],
-        [
-          1,
-          0.85,
-          0.3
-        ],
-        [
-          0.8,
-          0.5,
-          1
-        ],
-        [
-          1,
-          0.5,
-          0.85
-        ]
-      ],
-      "terrainEnabled": true,
-      "terrainTool": "off",
-      "terrainValley": [
-        0.0078,
-        0.0078,
-        0.0078
-      ],
-      "terrainMid": [
-        0.1529,
-        0.1608,
-        0.1451
-      ],
-      "terrainPeak": [
-        0.4157,
-        0.3882,
-        0.3451
-      ],
-      "terrainSnow": [
-        0.9,
-        0.92,
-        0.96
-      ]
-    }
-  }
+    name: "No Safety Net",
+    description: "The safety net is off — a species can die out for good.",
+    variant: true,
+    config: {
+      count: 8000,
+      perception: 0.1,
+      separationDist: 0.06,
+      maxSpeed: 0.15,
+      maxForce: 2,
+      alignWeight: 1,
+      cohesionWeight: 0.6,
+      separationWeight: 2,
+      boidScale: 0.007,
+      trailFade: 0.17,
+      colorIntensity: 0.8,
+      declump: 0,
+      numSpecies: 3,
+      chaseWeight: 1.2,
+      fleeWeight: 1.1,
+      killRadius: 0.025,
+      birthRate: 1,
+      adaptiveStrength: 1,
+      starveRate: 0.05,
+      deathMode: "energy",
+      seedMode: "clustered",
+      birthMode: "adaptive",
+      dominanceMode: "cyclic",
+      rescueEnabled: false,
+      rescueThreshold: 25,
+      rescueRate: 12,
+      rescueRestart: false,
+      speciesColors: PALETTE,
+    },
+  },
+  {
+    name: "Six-Species Chaos",
+    description: "Six species, no fixed roles — crowded and chaotic.",
+    config: {
+      count: 20000,
+      perception: 0.1,
+      separationDist: 0.06,
+      maxSpeed: 0.1,
+      maxForce: 2,
+      alignWeight: 1,
+      cohesionWeight: 0.6,
+      separationWeight: 2,
+      boidScale: 0.007,
+      trailFade: 0.45,
+      colorIntensity: 0.9,
+      declump: 0.025,
+      numSpecies: 6,
+      chaseWeight: 1.2,
+      fleeWeight: 1.1,
+      killRadius: 0.025,
+      birthRate: 1,
+      adaptiveStrength: 2,
+      starveRate: 0.05,
+      deathMode: "energy",
+      seedMode: "clustered",
+      birthMode: "adaptive",
+      dominanceMode: "chaos",
+      rescueEnabled: true,
+      rescueThreshold: 25,
+      rescueRate: 12,
+      rescueRestart: true,
+      speciesColors: PALETTE,
+    },
+  },
+  {
+    name: "Single Swarm",
+    description: "Just one peaceful species, no hunting.",
+    config: {
+      count: 10000,
+      perception: 0.1,
+      separationDist: 0.06,
+      maxSpeed: 0.15,
+      maxForce: 2,
+      alignWeight: 1,
+      cohesionWeight: 0.6,
+      separationWeight: 2,
+      boidScale: 0.007,
+      trailFade: 0.17,
+      colorIntensity: 0.8,
+      declump: 0,
+      numSpecies: 1,
+      chaseWeight: 1.2,
+      fleeWeight: 1.1,
+      killRadius: 0.025,
+      birthRate: 1,
+      adaptiveStrength: 1,
+      starveRate: 0.05,
+      deathMode: "convert",
+      seedMode: "clustered",
+      birthMode: "off",
+      dominanceMode: "cyclic",
+      rescueEnabled: true,
+      rescueThreshold: 25,
+      rescueRate: 12,
+      rescueRestart: true,
+      speciesColors: [[1, 1, 1], ...PALETTE.slice(1)],
+    },
+  },
 ];

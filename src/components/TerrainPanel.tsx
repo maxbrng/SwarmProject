@@ -8,9 +8,9 @@ interface Props {
   onChange: (partial: Partial<BoidsConfig>) => void;
   onClearTerrain: () => void;
   onReseedTerrain: () => void;
-  /** Bumped when a preset is loaded → re-sync the sliders/colors to the loaded config. */
+  // Bumped when a preset is loaded, to re-sync the sliders and colors.
   sync?: { nonce: number; cfg: Partial<BoidsConfig> } | null;
-  /** Accordion state — controlled by the parent so only one settings section is open at a time. */
+  // Only one settings section is open at a time, so the parent controls this.
   open: boolean;
   onToggle: () => void;
 }
@@ -202,7 +202,7 @@ const BRUSH_SLIDERS: TerrainSlider[] = [
 
 const ALL_SLIDERS = [...TERRAIN_SLIDERS, ...BRUSH_SLIDERS];
 
-// ── color helpers (linear rgb 0..1 ↔ #rrggbb) ──────────────────────────────────
+// color helpers: linear rgb 0..1 ↔ #rrggbb
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 function rgbToHex(c: RGB): string {
   const h = (x: number) => Math.round(clamp01(x) * 255).toString(16).padStart(2, "0");
@@ -213,11 +213,7 @@ function hexToRgb(hex: string): RGB {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
-/**
- * Temporary tuning panel for the terrain (Stage 3). Lets us dial in the relief feel live —
- * barrier strength, mountain size/drift, and the contour look — then bake the values into
- * DEFAULT_CONFIG and remove this panel.
- */
+// Live tuning panel for the terrain. Dev-only; final values get baked into DEFAULT_CONFIG.
 function TerrainPanel({ onChange, onClearTerrain, onReseedTerrain, sync, open, onToggle }: Props) {
   const [values, setValues] = useState<Record<TerrainKey, number>>(() => {
     const v = {} as Record<TerrainKey, number>;
@@ -231,27 +227,28 @@ function TerrainPanel({ onChange, onClearTerrain, onReseedTerrain, sync, open, o
   const [peak, setPeak] = useState<RGB>([...DEFAULT_CONFIG.terrainPeak] as RGB);
   const [snow, setSnow] = useState<RGB>([...DEFAULT_CONFIG.terrainSnow] as RGB);
 
-  // A preset was loaded → mirror its terrain values into this panel's sliders/colors (the sim itself
-  // is already updated by the parent's onChange). Guarded on the nonce so it only runs on load.
+  // A preset was loaded: mirror its terrain values into this panel's sliders and colors. Guarded on
+  // the nonce so it only runs on load; the sim itself is already updated by the parent's onChange.
   useEffect(() => {
     const cfg = sync?.cfg;
     if (!cfg) return;
-    /* eslint-disable react-hooks/set-state-in-effect -- intentional: mirror the loaded preset into local UI state */
-    setValues((prev) => {
-      const next = { ...prev };
-      for (const s of ALL_SLIDERS) {
-        const v = cfg[s.key];
-        if (typeof v === "number") next[s.key] = v;
-      }
-      return next;
-    });
-    if (typeof cfg.terrainEnabled === "boolean") setEnabled(cfg.terrainEnabled);
-    if (cfg.terrainTool) setToolState(cfg.terrainTool);
-    if (cfg.terrainValley) setValley([...cfg.terrainValley] as RGB);
-    if (cfg.terrainMid) setMid([...cfg.terrainMid] as RGB);
-    if (cfg.terrainPeak) setPeak([...cfg.terrainPeak] as RGB);
-    if (cfg.terrainSnow) setSnow([...cfg.terrainSnow] as RGB);
-    /* eslint-enable react-hooks/set-state-in-effect */
+    const mirror = () => {
+      setValues((prev) => {
+        const next = { ...prev };
+        for (const s of ALL_SLIDERS) {
+          const v = cfg[s.key];
+          if (typeof v === "number") next[s.key] = v;
+        }
+        return next;
+      });
+      if (typeof cfg.terrainEnabled === "boolean") setEnabled(cfg.terrainEnabled);
+      if (cfg.terrainTool) setToolState(cfg.terrainTool);
+      if (cfg.terrainValley) setValley([...cfg.terrainValley] as RGB);
+      if (cfg.terrainMid) setMid([...cfg.terrainMid] as RGB);
+      if (cfg.terrainPeak) setPeak([...cfg.terrainPeak] as RGB);
+      if (cfg.terrainSnow) setSnow([...cfg.terrainSnow] as RGB);
+    };
+    mirror();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync?.nonce]);
 
@@ -344,7 +341,6 @@ function TerrainPanel({ onChange, onClearTerrain, onReseedTerrain, sync, open, o
             Terrain: {enabled ? "on" : "off"}
           </button>
 
-          {/* Sculpt: gesture-driven multi-touch. 2 fingers raise, 3 lower; spread = radius. */}
           <div className="ctrl__label" style={{ marginTop: 6 }}>
             Sculpt · touch gestures
           </div>
@@ -445,7 +441,6 @@ function TerrainPanel({ onChange, onClearTerrain, onReseedTerrain, sync, open, o
   );
 }
 
-// memo: this panel keeps its own slider state and stays MOUNTED while the settings
-// block is collapsed. Its parent re-renders several times a second (FPS + population
-// readouts), and without memo every one of those would reconcile the whole control tree.
+// memo: the parent re-renders several times a second (FPS + population readouts). This panel keeps
+// its own state while staying mounted, so without memo every tick would reconcile the whole tree.
 export default memo(TerrainPanel);

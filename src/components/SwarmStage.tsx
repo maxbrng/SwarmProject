@@ -6,25 +6,23 @@ import { useEffect, useState } from "react";
 // Load the canvas client-only: WebGPU must never run during SSR/module import.
 const BoidsCanvas = dynamic(() => import("./BoidsCanvas"), { ssr: false });
 
-// Lightweight WebGPU preflight. Runs BEFORE the heavy engine chunk loads, so a device that can't
-// run WebGPU gets a clear, readable message instead of a black screen. Two distinct failure modes:
-//  - "insecure": the page is served over http:// to a non-localhost host (e.g. a LAN IP like
-//    http://192.168.x.x:3000 opened from an iPad). WebGPU is a [SecureContext] API → navigator.gpu
-//    is simply absent. localhost is exempt (why it works on the dev machine but not over the LAN).
-//    Fix = serve over https (Vercel deploy, `next dev --experimental-https`, or an https tunnel).
-//  - "missing": secure context but no WebGPU at all (e.g. iPad/iOS Safari — and Chrome on iOS, same
-//    WebKit engine — with WebGPU off/behind a flag, or an outdated browser).
+// WebGPU preflight, run before the heavy engine chunk loads so an unsupported device gets a clear
+// message instead of a black screen. "insecure" = served over http to a non-localhost host (WebGPU
+// needs a secure context); "missing" = secure context but no WebGPU (old browser, or a flag off).
 type Support = "checking" | "ok" | "insecure" | "missing";
 
 export default function SwarmStage() {
   const [support, setSupport] = useState<Support>("checking");
 
   useEffect(() => {
-    /* eslint-disable react-hooks/set-state-in-effect -- intentional: probe the browser once on mount */
-    if (typeof navigator !== "undefined" && "gpu" in navigator) setSupport("ok");
-    else if (typeof window !== "undefined" && !window.isSecureContext) setSupport("insecure");
-    else setSupport("missing");
-    /* eslint-enable react-hooks/set-state-in-effect */
+    const probe: Support =
+      typeof navigator !== "undefined" && "gpu" in navigator
+        ? "ok"
+        : typeof window !== "undefined" && !window.isSecureContext
+          ? "insecure"
+          : "missing";
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSupport(probe);
   }, []);
 
   if (support === "checking") return null;
