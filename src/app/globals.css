@@ -1620,3 +1620,61 @@ body {
 .panel__restart svg {
   display: block;
 }
+
+/* ── Mobile layout (portrait phones) ──────────────────────────────────────────
+   The desktop layout pins Settings top-left and Populations top-right. Below
+   ~600px those two cannot share a row — they used to overlap, hiding the first
+   species and half the "alive" count. On a phone the screen is split along its
+   long axis instead, following where the hand actually is: the readout sits up
+   top as a status bar, the controls sit at the bottom within thumb reach and
+   open upward like a sheet, and the artwork keeps everything in between.
+   Landscape phones stay on the desktop layout (~840px wide fits two corners).
+   The env() insets clear the notch and the home indicator; they resolve to 0
+   unless layout.tsx asks for viewport-fit=cover, so the calc is safe either way. */
+@media (max-width: 600px) {
+  /* Populations: status bar across the top — glanced at, never tapped. */
+  .popmon {
+    top: calc(10px + env(safe-area-inset-top));
+    left: calc(10px + env(safe-area-inset-left));
+    right: calc(10px + env(safe-area-inset-right));
+    width: auto;
+    padding: 11px 14px;
+  }
+
+  /* Settings: full-width bar along the bottom edge that opens upward. Capped so
+     it can never climb over the readout — sized for the 6-species maximum. */
+  .settings {
+    top: auto;
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    left: calc(10px + env(safe-area-inset-left));
+    right: calc(10px + env(safe-area-inset-right));
+    width: auto;
+    max-width: none;
+    max-height: calc(
+      100dvh - 200px - env(safe-area-inset-top) - env(safe-area-inset-bottom)
+    );
+  }
+  /* Collapsed it stays the full-width bar rather than shrinking to its label. */
+  .settings--closed {
+    width: auto;
+  }
+  /* The pinned footer must not eat the scrolling sections on a short screen. */
+  .settings__foot {
+    max-height: 38dvh;
+  }
+
+  /* Thumb-sized targets — the 36px coarse-pointer default is tight on a phone. */
+  .panel__toggle,
+  .section__head,
+  .panel__mode,
+  .panel__reset,
+  .panel__save,
+  .panel__restart,
+  .panel__info,
+  .presets__load,
+  .presets__btn,
+  .presets__toggle,
+  .touchtools button {
+    min-height: 44px;
+  }
+}

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -15,6 +15,20 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Swarm",
   description: "Autonomous boids ecosystem (WebGPU)",
+};
+
+// Phone behaviour. viewport-fit=cover lets the canvas run under the notch and home indicator (the
+// panels pull themselves back with env() insets in globals.css). Zoom is disabled on purpose: the
+// whole surface is a gesture target — pinching means sculpting terrain here, and without this the
+// browser would zoom the page instead. themeColor paints the browser chrome black so the artwork
+// reaches the screen edges like an app.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
+  themeColor: "#000000",
 };
 
 export default function RootLayout({
