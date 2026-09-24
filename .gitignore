@@ -42,6 +42,7 @@ next-env.d.ts
 
 # lokale Tool-/Editor-Konfig — nicht ins Repo
 /.claude/
+/.codex/
 /.nvmrc
 
 # alle Markdown-Docs lokal halten, nicht ins Repo (Frank committed selbst)

@@ -10,6 +10,12 @@ import TerrainPanel from "./TerrainPanel";
 import SettingsFooter from "./SettingsFooter";
 import HelpModal from "./HelpModal";
 import { IS_DEV } from "@/lib/viewMode";
+import { useIsMobile } from "@/lib/useIsMobile";
+
+// Phone-only chrome behaviour. The artwork owns the screen, so both bars dim themselves once nobody
+// has touched them, and a swipe walks through three states: hidden → bar → open sheet.
+const CHROME_IDLE_MS = 6000;
+const SWIPE_PX = 40;
 
 type PanelId = "swarm" | "terrain" | "swirl";
 type TouchTool = BoidsConfig["terrainTool"]; // "off" (swirl) | "raise" | "lower"
@@ -68,6 +74,68 @@ export default function BoidsCanvas() {
   const toggleSwirl = useCallback(() => togglePanel("swirl"), [togglePanel]);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Phone-only chrome state. On desktop every flag below stays inert.
+  const isMobile = useIsMobile();
+  const [chromeHidden, setChromeHidden] = useState(false);
+  const [chromeIdle, setChromeIdle] = useState(false);
+  const [popExpanded, setPopExpanded] = useState(false);
+  // Bumped on every touch of the chrome; restarting the effect below restarts the idle countdown.
+  const [idleNonce, setIdleNonce] = useState(0);
+
+  const wakeChrome = useCallback(() => {
+    setChromeIdle(false);
+    setIdleNonce((n) => n + 1);
+  }, []);
+
+  // Dim the chrome once it has been left alone. Touching the canvas deliberately does NOT count —
+  // that is when the swarm should be least obstructed. An open sheet never dims: sitting and reading
+  // the controls is using them.
+  useEffect(() => {
+    if (!isMobile || chromeHidden || settingsOpen) return;
+    const t = window.setTimeout(() => setChromeIdle(true), CHROME_IDLE_MS);
+    return () => window.clearTimeout(t);
+  }, [isMobile, chromeHidden, settingsOpen, idleNonce]);
+
+  // hidden → bar → open sheet, and back down again.
+  const stepUp = useCallback(() => {
+    if (chromeHidden) setChromeHidden(false);
+    else setSettingsOpen(true);
+  }, [chromeHidden]);
+  const stepDown = useCallback(() => {
+    if (settingsOpen) setSettingsOpen(false);
+    else setChromeHidden(true);
+  }, [settingsOpen]);
+
+  // The grabber is the one handle that is always reachable, so it can never strand the user: a drag
+  // moves one state, a plain tap toggles the sheet.
+  const dragStartY = useRef<number | null>(null);
+  const onGrabDown = useCallback(
+    (e: React.PointerEvent) => {
+      dragStartY.current = e.clientY;
+      wakeChrome();
+    },
+    [wakeChrome],
+  );
+  const onGrabUp = useCallback(
+    (e: React.PointerEvent) => {
+      const start = dragStartY.current;
+      dragStartY.current = null;
+      if (start === null) return;
+      const dy = e.clientY - start;
+      if (dy > SWIPE_PX) stepDown();
+      else if (dy < -SWIPE_PX) stepUp();
+      else if (chromeHidden) setChromeHidden(false);
+      else setSettingsOpen((o) => !o);
+    },
+    [chromeHidden, stepDown, stepUp],
+  );
+
+  const togglePop = useCallback(() => {
+    wakeChrome();
+    setPopExpanded((v) => !v);
+  }, [wakeChrome]);
+
   const [help, setHelp] = useState(false);
   const [touchTool, setTouchTool] = useState<TouchTool>(DEFAULT_CONFIG.terrainTool);
   const [showTouchBar, setShowTouchBar] = useState(false);
@@ -170,8 +238,52 @@ export default function BoidsCanvas() {
         <div className="swarm-error">{error}</div>
       ) : (
         <>
-          <PopulationMonitor counts={counts} numSpecies={numSpecies} colors={colors} />
-          <div className={`settings ${settingsOpen ? "" : "settings--closed"}`}>
+          <PopulationMonitor
+            counts={counts}
+            numSpecies={numSpecies}
+            colors={colors}
+            className={
+              isMobile
+                ? [
+                    popExpanded ? "" : "popmon--compact",
+                    chromeHidden ? "popmon--hidden" : "",
+                    chromeIdle ? "chrome--idle" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
+                : undefined
+            }
+            onToggle={isMobile ? togglePop : undefined}
+          />
+          <div
+            className={[
+              "settings",
+              settingsOpen ? "" : "settings--closed",
+              isMobile && chromeHidden ? "settings--hidden" : "",
+              isMobile && chromeIdle ? "chrome--idle" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+            onPointerDown={isMobile ? wakeChrome : undefined}
+          >
+            {isMobile && (
+              <div
+                className="settings__grabber"
+                onPointerDown={onGrabDown}
+                onPointerUp={onGrabUp}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
+                  e.preventDefault();
+                  if (chromeHidden) setChromeHidden(false);
+                  else setSettingsOpen((o) => !o);
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label="Drag to show or hide the controls"
+              >
+                <span className="settings__grabberBar" />
+              </div>
+            )}
             <div className="settings__head">
               <button
                 className="settings__toggle"

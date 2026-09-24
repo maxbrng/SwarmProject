@@ -8,6 +8,10 @@ interface Props {
   numSpecies: number;
   // Live per-species colors (linear rgb 0..1), falls back to the palette.
   colors?: RGB[];
+  // Extra state classes, used on mobile for the compact / hidden / idle variants.
+  className?: string;
+  // Mobile only: tapping the readout switches between the one-line summary and the full bars.
+  onToggle?: () => void;
 }
 
 function speciesColor(s: number, colors?: RGB[]): string {
@@ -15,14 +19,35 @@ function speciesColor(s: number, colors?: RGB[]): string {
   return `rgb(${Math.round(c[0] * 255)}, ${Math.round(c[1] * 255)}, ${Math.round(c[2] * 255)})`;
 }
 
-export default function PopulationMonitor({ counts, numSpecies, colors }: Props) {
+export default function PopulationMonitor({
+  counts,
+  numSpecies,
+  colors,
+  className,
+  onToggle,
+}: Props) {
   const species = Array.from({ length: numSpecies }, (_, s) => s);
   const values = species.map((s) => counts[s] ?? 0);
   const total = values.reduce((a, b) => a + b, 0);
   const max = Math.max(1, ...values);
 
   return (
-    <div className="popmon">
+    <div
+      className={`popmon ${className ?? ""}`.trimEnd()}
+      onClick={onToggle}
+      onKeyDown={
+        onToggle
+          ? (e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              onToggle();
+            }
+          : undefined
+      }
+      role={onToggle ? "button" : undefined}
+      tabIndex={onToggle ? 0 : undefined}
+      aria-label={onToggle ? "Toggle population details" : undefined}
+    >
       <div className="popmon__head">
         <span className="popmon__title">Populations</span>
         <span className="popmon__total">{total.toLocaleString("en-US")} alive</span>
