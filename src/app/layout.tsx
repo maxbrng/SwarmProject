@@ -1,6 +1,14 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import {
+  SITE_URL,
+  SITE_NAME,
+  SITE_TAGLINE,
+  SITE_DESCRIPTION,
+  AUTHOR_NAME,
+  SITE_KEYWORDS,
+} from "@/lib/site";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -12,9 +20,40 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// metadataBase makes every relative URL below (og image, canonical) resolve against the live domain,
+// which is what crawlers and link previews need — they cannot resolve site-relative paths themselves.
 export const metadata: Metadata = {
-  title: "Swarm",
-  description: "Autonomous boids ecosystem (WebGPU)",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: `${SITE_NAME} — Interactive WebGPU Ecosystem`,
+    template: `%s — ${SITE_NAME}`,
+  },
+  description: SITE_DESCRIPTION,
+  applicationName: SITE_NAME,
+  keywords: SITE_KEYWORDS,
+  authors: [{ name: AUTHOR_NAME }],
+  creator: AUTHOR_NAME,
+  publisher: AUTHOR_NAME,
+  alternates: { canonical: "/" },
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: SITE_NAME,
+    title: `${SITE_NAME} — ${SITE_TAGLINE}`,
+    description: SITE_DESCRIPTION,
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${SITE_NAME} — ${SITE_TAGLINE}`,
+    description: SITE_DESCRIPTION,
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, "max-image-preview": "large" },
+  },
+  category: "art",
 };
 
 // Phone behaviour. viewport-fit=cover lets the canvas run under the notch and home indicator (the
@@ -45,6 +84,26 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body suppressHydrationWarning>
+        {/* Structured data: tells search engines this page IS the artwork, not a page about one. */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "VisualArtwork",
+              name: SITE_NAME,
+              headline: `${SITE_NAME} — ${SITE_TAGLINE}`,
+              description: SITE_DESCRIPTION,
+              url: SITE_URL,
+              image: `${SITE_URL}/opengraph-image`,
+              artform: "Interactive digital artwork",
+              artMedium: "Real-time WebGPU simulation",
+              creator: { "@type": "Person", name: AUTHOR_NAME },
+              inLanguage: "en",
+              keywords: SITE_KEYWORDS.join(", "),
+            }),
+          }}
+        />
         <script
           data-role="boot-error-catcher"
           dangerouslySetInnerHTML={{
