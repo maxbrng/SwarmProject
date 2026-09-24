@@ -38,6 +38,12 @@ body {
   width: 100%;
   height: 100%;
   touch-action: none;
+  /* A long press on iOS otherwise selects the canvas and pops up the copy/share callout — which is
+     exactly the length of press that means "sculpt" here. user-select gets its -webkit- prefix from
+     the CSS pipeline automatically (never hand-write it, see the backdrop-filter note below), but
+     touch-callout is WebKit-only and has no standard form, so that one has to be spelled out. */
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* ── Swirl feedback overlay (deliberately subtle: a soft glow, no motion) ──── */
@@ -1733,12 +1739,15 @@ body {
   .popmon--compact {
     display: flex;
     align-items: center;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 4px 12px;
     padding: 9px 14px;
   }
+  /* The total never shrinks and never gets pushed out — it is the headline number. */
   .popmon--compact .popmon__head {
     order: 2;
     margin: 0 0 0 auto;
+    flex: 0 0 auto;
   }
   .popmon--compact .popmon__title {
     display: none;
@@ -1747,10 +1756,20 @@ body {
     order: 1;
     display: flex;
     flex-direction: row;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    min-width: 0;
   }
+  /* The full view lays a row out as a grid (marker | bar | number). Here the bar is gone, and the
+     number would inherit its greedy 1fr column and shove the total off the panel — so the row
+     becomes a plain flex chip that is only as wide as its contents. */
   .popmon--compact .popmon__row {
+    display: flex;
+    align-items: center;
     gap: 5px;
+  }
+  .popmon--compact .popmon__num {
+    text-align: left;
   }
   .popmon--compact .popmon__track {
     display: none;
