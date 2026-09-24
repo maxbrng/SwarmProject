@@ -9,6 +9,10 @@ procedural landscape. Visitors can disturb the system, but never permanently con
 
 `WebGPU` · `WGSL` · `TypeScript` · `Next.js` · `Multi-touch`
 
+### **[▶ Open the live artwork — swarm.maxbreuning.com](https://swarm.maxbreuning.com)**
+
+Runs in the browser, no install. Needs a WebGPU-capable browser (Chrome, Edge, or Safari 26+).
+
 ## Project Video
 
 [![Watch the project video](https://img.youtube.com/vi/bPigw6eilWA/maxresdefault.jpg)](https://youtu.be/bPigw6eilWA)
@@ -91,8 +95,9 @@ npm run start
 
 ```text
 src/
-├── app/                 Next.js application shell
+├── app/                 Next.js application shell, metadata, icon, sitemap
 ├── components/          Interface, controls, and population monitor
+├── lib/site.ts          Title, description, URL — the source every meta tag reads
 ├── lib/viewMode.ts      Full dev panel vs. curated exhibition panel
 └── webgpu/boids/
     ├── engine.ts        Orchestrator: GPU resources, frame loop, public handle
